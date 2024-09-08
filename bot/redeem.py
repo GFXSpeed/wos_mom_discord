@@ -37,7 +37,7 @@ def redeem_code_for_player(code, pid):
         result = driver.find_element(By.XPATH, "/html/body/div/div/div[2]/div[2]/p").text
         print(f'{player}s result {result}')
     except NoSuchElementException:
-        return "Element not found"
+        result = "Element not found"
     finally:
         driver.quit()
     return result, player
