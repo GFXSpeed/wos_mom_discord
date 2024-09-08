@@ -80,21 +80,6 @@ async def add_id_error(ctx, error):
     if isinstance(error, commands.MissingAnyRole):
         await ctx.send("Sorry, you are not allowed to do this")
 
-#@bot.command(help="Removes a player ID. R4+ only. Usage: !remove_id <player_id>", category="Player Management")
-#@commands.has_any_role(*allowed_roles)
-#async def remove_id(ctx, player_id: str):
-#    await log_commands(ctx, removed_id=player_id)
-#    player_data = await load_player_data('players.json')
-#    if player_id not in player_data:
-#        await ctx.send(f'Player ID {player_id} does not exist.')
-#        print("Player does not exist")
-#    else:
-#        player_name = player_data[player_id]
-#        del player_data[player_id]
-#        await save_player_data('players.json', player_data)
-#        await ctx.send(f'Player ID {player_id} with name {player_name} removed.')
-#        print(f"Player {player_name} (ID: {player_id}) removed")
-
 @bot.command(help="Removes a player ID. R4+ only. Usage: !remove_id <player_id>", category="Player Management")
 @commands.has_any_role(*allowed_roles)
 async def remove_id(ctx, *player_ids: str):
