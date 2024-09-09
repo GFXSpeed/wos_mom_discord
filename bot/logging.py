@@ -11,7 +11,6 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-# General Log
 general_handler = logging.FileHandler(os.path.join(log_directory, 'bot.log'))
 general_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', '%Y-%m-%d %H:%M:%S'))
 logging.getLogger().addHandler(general_handler)
@@ -35,15 +34,17 @@ event_logger = logging.getLogger('event_logger')
 event_logger.setLevel(logging.INFO)
 event_handler = logging.FileHandler(os.path.join(log_directory, 'events.log'))
 event_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s', '%Y-%m-%d %H:%M:%S'))
-event_logger.addHandler(commands_handler)
+event_logger.addHandler(event_handler)
 
 async def log_redeem_attempt(player_id, player_name, code, result):
     redeem_logger.info(f"Player ID: {player_id}, Player Name: {player_name}, Code: {code}, Result: {result}")
 
-async def log_commands(ctx, **kwargs):
+async def log_commands(interaction, **kwargs):
     extra_info = ' '.join([f'{key}={value}' for key, value in kwargs.items()])
-    commands_logger.info(f"{ctx.message.author} (ID: {ctx.message.author.id}) has used {ctx.command} {extra_info}")
+    user = interaction.user
+    command_name = interaction.command.name if hasattr(interaction, 'command') else 'Unknown Command'
+    commands_logger.info(f"{user} (ID: {user.id}) has used {command_name} {extra_info}")
 
 async def log_event(event, **kwargs):
     extra_info = ' '.join([f'{key}={value}' for key, value in kwargs.items()])
-    commands_logger.info(f"{event} triggered: {extra_info}")
+    event_logger.info(f"{event} triggered: {extra_info}")

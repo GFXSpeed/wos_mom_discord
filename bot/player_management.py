@@ -1,7 +1,7 @@
 import os
 import json
 import discord
-from discord.ext import commands
+from discord import app_commands
 from bot import bot, allowed_roles, SELENIUM
 from .logging import log_commands
 
@@ -56,39 +56,46 @@ async def is_valid_player_id(player_id):
     finally:
         driver.quit()
 
-@bot.command(help="Adds a player ID. Usage: !add_id <player_id>", category="Player Management")
-async def add_id(ctx, player_id: str):
-    await log_commands(ctx, player_id=player_id)
+@bot.tree.command(name="add_id", description="Adds a player ID. Usage: /add_id <player_id>")
+async def add_id(interaction: discord.Interaction, player_id: str):
+    await interaction.response.defer()
+
+    await log_commands(interaction)
     player_data = await load_player_data('players.json')
+
     try:
         if player_id in player_data:
             player_name = player_data[player_id]
-            await ctx.send(f'Player ID {player_id} already exists with name **{player_name}**.')
+            await interaction.followup.send(f'Player ID {player_id} already exists with name **{player_name}**.')
         else:
             is_valid, player_name = await is_valid_player_id(player_id)
             if is_valid:
                 player_data[player_id] = player_name
                 await save_player_data('players.json', player_data)
-                await ctx.send(f'Player ID {player_id} with name **{player_name}** added.')
+                await interaction.followup.send(f'Player ID {player_id} with name **{player_name}** added.')
             else:
-                await ctx.send(f'Player ID {player_id} is not valid.')
+                await interaction.followup.send(f'Player ID {player_id} is not valid.')
     except Exception as e:
-        await ctx.send(f'Something went wrong.')
+        await interaction.followup.send(f'Something went wrong: {e}')
 
-@add_id.error
-async def add_id_error(ctx, error):
-    if isinstance(error, commands.MissingAnyRole):
-        await ctx.send("Sorry, you are not allowed to do this")
 
-@bot.command(help="Removes a player ID. R4+ only. Usage: !remove_id <player_id>", category="Player Management")
-@commands.has_any_role(*allowed_roles)
-async def remove_id(ctx, *player_ids: str):
-    await log_commands(ctx, removed_ids=player_ids)
+
+#@add_id.error
+#async def add_id_error(interaction:discord.Interaction, error):
+#    if isinstance(error, app_commands.MissingAnyRole):
+#        await interaction.response.send_message("Sorry, you are not allowed to do this")
+
+@bot.tree.command(name="remove_id", description="Removes player IDs. R4+ only. Usage: /remove_id <player_id, player_id>")
+@app_commands.checks.has_any_role(*allowed_roles)
+async def remove_id(interaction: discord.Interaction, player_ids: str):
+    await log_commands(interaction)
+    player_ids = [pid.strip() for pid in player_ids.split(",")]
+
     player_data = await load_player_data('players.json')
-    
+
     removed_players = []
     non_existent_ids = []
-    
+
     for player_id in player_ids:
         if player_id not in player_data:
             non_existent_ids.append(player_id)
@@ -96,48 +103,73 @@ async def remove_id(ctx, *player_ids: str):
             player_name = player_data[player_id]
             del player_data[player_id]
             removed_players.append((player_id, player_name))
-    
+
     await save_player_data('players.json', player_data)
-    
+
+    # Vorbereitung der Antwort
+    removed_msg = ""
+    non_existent_msg = ""
+
     if removed_players:
         removed_msg = "\n".join([f"Player ID {player_id} with name {player_name} removed." for player_id, player_name in removed_players])
-        await ctx.send(f'The following players were removed:\n{removed_msg}')
     
     if non_existent_ids:
         non_existent_msg = ", ".join(non_existent_ids)
-        await ctx.send(f'The following IDs do not exist: {non_existent_msg}')
     
-    print(f"Removed players: {removed_players}, Non-existent IDs: {non_existent_ids}")
-    
-@remove_id.error
-async def remove_id_error(ctx, error):
-    if isinstance(error, commands.MissingAnyRole):
-        await ctx.send("Sorry, you are not allowed to do this")
+    # Zusammenfassung erstellen
+    summary = ""
+    if removed_msg:
+        summary += f'The following players were removed:\n{removed_msg}\n'
+    if non_existent_msg:
+        summary += f'The following IDs do not exist: {non_existent_msg}'
 
-@bot.command(help="Lists all player IDs and names.", category="Player Management")
-async def list_ids(ctx):
-    await log_commands(ctx)
+    if summary:
+        await interaction.response.send_message(summary)
+    else:
+        await interaction.response.send_message("No changes were made.")
+
+    print(f"Removed players: {removed_players}, Non-existent IDs: {non_existent_ids}")
+
+@remove_id.error
+async def remove_id_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingAnyRole):
+        await interaction.response.send_message("Sorry, you are not allowed to do this")
+
+
+@bot.tree.command(name="list_ids", description="Lists all player IDs and names.")
+async def list_ids(interaction: discord.Interaction):
+    await log_commands(interaction)
     player_data = await load_player_data('players.json')
+    
     if player_data:
         embeds = []
         embed = discord.Embed(title="Current Player IDs and Names", color=discord.Color.blue())
         field_count = 0
 
+        # Füge Felder zum Embed hinzu
         for i, (player_id, player_name) in enumerate(player_data.items(), 1):
             embed.add_field(name=f"ID: {player_id}", value=f"Name: {player_name}", inline=True)
             field_count += 1
-            if field_count == 25:  # Discord-Limit for embeds
+            if field_count == 25:  # Discord-Limit für Embeds
                 embeds.append(embed)
                 embed = discord.Embed(title="Current Player IDs and Names (cont.)", color=discord.Color.blue())
                 field_count = 0
-        
+
+        # Füge den letzten Embed hinzu, wenn noch Felder vorhanden sind
         if len(embed.fields) > 0:
             embeds.append(embed)
         
-        for e in embeds:
-            await ctx.send(embed=e)
+        # Sende alle Embeds, aber nur eine Antwort auf die Interaktion
+        if len(embeds) == 1:
+            await interaction.response.send_message(embed=embeds[0])
+        else:
+            # Schicke die erste Nachricht und die restlichen als Follow-up-Nachrichten
+            await interaction.response.send_message(embed=embeds[0])
+            for e in embeds[1:]:
+                await interaction.followup.send(embed=e)
     else:
-        await ctx.send("There are no player IDs in the database.")
+        await interaction.response.send_message("There are no player IDs in the database.")
+
 
 
 async def update_player_data(file_name):
@@ -176,12 +208,12 @@ async def update_player_data(file_name):
 
     return updated_players, removed_players
 
-@bot.command(help="Updates all player data to ensure validity.", category="Player Management")
-@commands.has_any_role(*allowed_roles)
-async def update_players(ctx):
-    await log_commands(ctx)
+@bot.tree.command(name="update_player", description="Updates all player data to ensure validity.")
+@app_commands.checks.has_any_role(*allowed_roles)
+async def update_players(interaction:discord.Interaction):
+    await log_commands(interaction)
     try:
-        await ctx.send("Updating players. This could take a while")
+        await interaction.response.send_message("Updating players. This could take a while")
         updated_players, removed_players = await update_player_data('players.json')
         changes_summary = "Player data update completed.\n"
 
@@ -198,9 +230,9 @@ async def update_players(ctx):
         
         if not updated_players and not removed_players:
             changes_summary = "No changes detected."
-        await ctx.send(changes_summary)
+        await interaction.response.send_message(changes_summary)
 
     except Exception as e:
-        await ctx.send(f'Something went wrong while updating player data')
+        await interaction.response.send_message(f'Something went wrong while updating player data')
         await log_commands(e)
 

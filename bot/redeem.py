@@ -17,8 +17,12 @@ op.add_argument("--ignore-ssl-errors=yes")
 op.add_argument("--ignore-certificate-errors")
 
 def redeem_code_for_player(code, pid):
-    driver = webdriver.Remote(command_executor="SELENIUM", options=op)
+    driver = webdriver.Remote(command_executor=SELENIUM, options=op)
     randomtime = random.uniform(1.0, 2.0)
+
+    result = "Unkown error"
+    player = "Unkown player"
+
     try:
         driver.get("https://wos-giftcode.centurygame.com/")
         time.sleep(2)
@@ -38,15 +42,19 @@ def redeem_code_for_player(code, pid):
         print(f'{player}s result {result}')
     except NoSuchElementException:
         result = "Element not found"
+    except Exception as e:
+        result = f'Error: {str(e)}'   
     finally:
         driver.quit()
     return result, player
 
-async def use_codes(ctx, code, player_ids=None, retry_limit=1):
+async def use_codes(ctx, code, player_ids=None, retry_limit=4):
     if player_ids is None:
         player_data = await load_player_data('players.json')
         player_ids = list(player_data.keys())
     
+    total_attempts = retry_limit + 1
+    attempts = 0
     redeem_success = 0
     redeem_failed = 0
     redeem_error = 0
@@ -105,16 +113,18 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=1):
             queue.put_nowait(None)
         await asyncio.gather(*workers)
 
-    await send_summary(thread, code, playercount, redeem_success, redeem_failed, redeem_error)
-    
-    if retry_ids and retry_limit > 0 and redeem_error != 1 and redeem_error != 2:
-        await use_codes(ctx, code, player_ids=retry_ids, retry_limit=retry_limit-1)
+    if retry_ids and attempts < retry_limit:
+        attempts += 1
+        await use_codes(ctx, code, player_ids=retry_ids, retry_limit=retry_limit - attempts)
+    else:
+        await send_summary(thread, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts)
 
-async def send_summary(channel, code, playercount, redeem_success, redeem_failed, redeem_error):
+async def send_summary(channel, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts):
     embed = discord.Embed(title=f"Stats for giftcode: {code}")
     embed.add_field(name="Players in database: ", value=f"{playercount}", inline=False)
     embed.add_field(name="Successfully redeemed for", value=f"{redeem_success} players", inline=True)
     embed.add_field(name="Already used or failed for", value=f"{redeem_failed} players", inline=True)
+    embed.set_footer(text=f"Redeemed in {total_attempts} tries")
 
     if redeem_error == 1:
         embed.set_footer(text="Code did not exist. Exited early.")

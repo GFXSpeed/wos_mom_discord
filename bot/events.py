@@ -7,10 +7,11 @@ from .logging import log_event
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name}')
+    await bot.tree.sync()
     await bot.change_presence(activity=discord.Game("Whiteout Survival"), status=discord.Status.online)
     check_guesswho.start()
     check_event_reminder.start()
+    print(f'Logged in as {bot.user.name}')
 
 @bot.event
 async def on_message(message: discord.Message):

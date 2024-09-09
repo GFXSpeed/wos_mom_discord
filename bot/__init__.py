@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv, find_dotenv
 from discord.ext import commands
-from discord import Intents
+from discord import Intents, app_commands
 
 load_dotenv(find_dotenv())
 TOKEN = os.getenv("REDEEM_TOKEN")
@@ -15,12 +15,12 @@ intents.message_content = True
 intents.members = True
 intents.guilds = True
 
-bot = commands.Bot(command_prefix='!', intents=intents, help_command=commands.DefaultHelpCommand())
-
 allowed_roles = ["Admin", "R4", "R5"]
 
+bot = commands.Bot(command_prefix="/", intents=intents)
+
 def load_modules():
-    from . import logging, user_commands, events, player_management, redeem, guesswho, tasks
+    from . import logging, events, guesswho, player_management, user_commands, redeem
     print("Module geladen")
 
 def run():
