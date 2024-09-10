@@ -53,8 +53,8 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
         player_data = await load_player_data('players.json')
         player_ids = list(player_data.keys())
     
-    total_attempts = retry_limit + 1
-    attempts = 0
+    total_attempts = 0
+    max_attempts = retry_limit + 1
     redeem_success = 0
     redeem_failed = 0
     redeem_error = 0
@@ -65,6 +65,8 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
     thread = await ctx.channel.create_thread(name=f'Code: {code}', auto_archive_duration=4320, type=discord.ChannelType.public_thread)
     starting_info = f'Starting to redeem code **{code}** for {playercount} players. This could take up to {(12*playercount)/60} minutes'
     await thread.send(starting_info)
+
+    queue = asyncio.Queue()
 
     async def worker(queue):
         nonlocal redeem_success, redeem_failed, redeem_error, retry_ids
@@ -78,11 +80,11 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
                 if "not found" in result:
                     redeem_error = 1
                 elif "Expired" in result:
-                    redeem_error = 2                
+                    redeem_error = 2
                 elif "Redeemed" in result:
-                    redeem_success += 1                
+                    redeem_success += 1
                 elif "Already claimed" in result:
-                    redeem_failed += 1                
+                    redeem_failed += 1
                 else:
                     redeem_failed += 1
                     redeem_error = 3
@@ -100,24 +102,28 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
                 await log_redeem_attempt(pid, player, code, e)
                 break
 
-    queue = asyncio.Queue()
-    for pid in player_ids:
-        await queue.put(pid)
+    while total_attempts < max_attempts:
+        total_attempts += 1
+        loop = asyncio.get_event_loop()
 
-    loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        workers = [asyncio.create_task(worker(queue)) for _ in range(4)]
-        await queue.join()
+        for pid in player_ids:
+            await queue.put(pid)
 
-        for worker in workers:
-            queue.put_nowait(None)
-        await asyncio.gather(*workers)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            workers = [asyncio.create_task(worker(queue)) for _ in range(4)]
+            await queue.join()
 
-    if retry_ids and attempts < retry_limit:
-        attempts += 1
-        await use_codes(ctx, code, player_ids=retry_ids, retry_limit=retry_limit - attempts)
-    else:
-        await send_summary(thread, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts)
+            for worker in workers:
+                queue.put_nowait(None)
+            await asyncio.gather(*workers)
+
+        if retry_ids and total_attempts < max_attempts:
+            player_ids = retry_ids
+            retry_ids = []
+        else:
+            break
+
+    await send_summary(thread, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts)
 
 async def send_summary(channel, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts):
     embed = discord.Embed(title=f"Stats for giftcode: {code}")
