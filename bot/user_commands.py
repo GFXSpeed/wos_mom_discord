@@ -8,7 +8,8 @@ from .redeem import use_codes
 async def info(interaction: discord.Interaction):
     description = ("This bot monitors the gift code channel of the official WOS Discord server. "
                 "If a gift code is found, it is automatically redeemed for all deposited players. "
-                "If you find a new code on Facebook or elsewhere R4+ can use /code <code> to start manually. ")
+                "If you find a new code on Facebook or elsewhere R4+ can use /code <code> to start manually."
+                "\n\nFor more information and to view the source code, visit the [GitHub repository](https://github.com/GFXSpeed/wos_mom_discord).")
     await log_commands(interaction)
     await interaction.response.send_message(description)
 
