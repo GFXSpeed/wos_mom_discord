@@ -4,7 +4,7 @@ from discord.ext import commands
 from discord import Intents, app_commands
 
 load_dotenv(find_dotenv())
-TOKEN = os.getenv("REDEEM_TOKEN")
+TOKEN = os.getenv("DISCORD_TOKEN")
 SELENIUM = os.getenv("SELENIUM_URL")
 GUILD_ID = os.getenv("GUILD_ID")
 WHO_IS = os.getenv("WHO_IS_CHANNEL")
