@@ -78,13 +78,6 @@ async def add_id(interaction: discord.Interaction, player_id: str):
     except Exception as e:
         await interaction.followup.send(f'Something went wrong: {e}')
 
-
-
-#@add_id.error
-#async def add_id_error(interaction:discord.Interaction, error):
-#    if isinstance(error, app_commands.MissingAnyRole):
-#        await interaction.response.send_message("Sorry, you are not allowed to do this")
-
 @bot.tree.command(name="remove_id", description="Removes player IDs. R4+ only. Usage: /remove_id <player_id, player_id>")
 @app_commands.checks.has_any_role(*allowed_roles)
 async def remove_id(interaction: discord.Interaction, player_ids: str):
@@ -106,7 +99,6 @@ async def remove_id(interaction: discord.Interaction, player_ids: str):
 
     await save_player_data('players.json', player_data)
 
-    # Vorbereitung der Antwort
     removed_msg = ""
     non_existent_msg = ""
 
@@ -116,7 +108,6 @@ async def remove_id(interaction: discord.Interaction, player_ids: str):
     if non_existent_ids:
         non_existent_msg = ", ".join(non_existent_ids)
     
-    # Zusammenfassung erstellen
     summary = ""
     if removed_msg:
         summary += f'The following players were removed:\n{removed_msg}\n'
@@ -146,24 +137,20 @@ async def list_ids(interaction: discord.Interaction):
         embed = discord.Embed(title="Current Player IDs and Names", color=discord.Color.blue())
         field_count = 0
 
-        # Füge Felder zum Embed hinzu
         for i, (player_id, player_name) in enumerate(player_data.items(), 1):
             embed.add_field(name=f"ID: {player_id}", value=f"Name: {player_name}", inline=True)
             field_count += 1
-            if field_count == 25:  # Discord-Limit für Embeds
+            if field_count == 25:
                 embeds.append(embed)
                 embed = discord.Embed(title="Current Player IDs and Names (cont.)", color=discord.Color.blue())
                 field_count = 0
 
-        # Füge den letzten Embed hinzu, wenn noch Felder vorhanden sind
         if len(embed.fields) > 0:
             embeds.append(embed)
         
-        # Sende alle Embeds, aber nur eine Antwort auf die Interaktion
         if len(embeds) == 1:
             await interaction.response.send_message(embed=embeds[0])
         else:
-            # Schicke die erste Nachricht und die restlichen als Follow-up-Nachrichten
             await interaction.response.send_message(embed=embeds[0])
             for e in embeds[1:]:
                 await interaction.followup.send(embed=e)
@@ -208,31 +195,63 @@ async def update_player_data(file_name):
 
     return updated_players, removed_players
 
+class PlayerActionView(discord.ui.View):
+    def __init__(self, player_id, player_name, file_name):
+        super().__init__()
+        self.player_id = player_id
+        self.player_name = player_name
+        self.file_name = file_name
+
+    @discord.ui.button(label="Delete", style=discord.ButtonStyle.danger)
+    async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.remove_player(interaction, delete=True)
+
+    @discord.ui.button(label="Keep", style=discord.ButtonStyle.success)
+    async def retain(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.remove_player(interaction, delete=False)
+
+    async def remove_player(self, interaction: discord.Interaction, delete: bool):
+        player_data = await load_player_data(self.file_name)
+        if delete:
+            if self.player_id in player_data:
+                del player_data[self.player_id]
+                await save_player_data(self.file_name, player_data)
+                await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) has been deleted.", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) was not found.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) has been retained.", ephemeral=True)
+
+        self.delete.disabled = True
+        self.retain.disabled = True
+        await interaction.message.edit(view=self)
+
 @bot.tree.command(name="update_player", description="Updates all player data to ensure validity.")
 @app_commands.checks.has_any_role(*allowed_roles)
-async def update_players(interaction:discord.Interaction):
+async def update_players(interaction: discord.Interaction):
     await log_commands(interaction)
     try:
-        await interaction.response.send_message("Updating players. This could take a while")
-        updated_players, removed_players = await update_player_data('players.json')
+        await interaction.response.send_message("Updating players. This could take a while...", ephemeral=True)
+
+        updated_players, invalid_players = await update_player_data('players.json')
         changes_summary = "Player data update completed.\n"
 
-        
         if updated_players:
             changes_summary += "Updated players:\n"
             for player_id, old_name, new_name in updated_players:
                 changes_summary += f"ID: {player_id}, Old Name: {old_name}, New Name: {new_name}\n"
+
+        if invalid_players:
+            changes_summary += "Error in proccess or unkown ID (pending review):\n"
+            for player_id, player_name in invalid_players:
+                await interaction.followup.send(f"ID: {player_id}, Name: {player_name}\nWhat do you want to do with this player?",
+                                                view=PlayerActionView(player_id, player_name, 'players.json'))
         
-        if removed_players:
-            changes_summary += "Removed players:\n"
-            for player_id in removed_players:
-                changes_summary += f"ID: {player_id}\n"
-        
-        if not updated_players and not removed_players:
+        if not updated_players and not invalid_players:
             changes_summary = "No changes detected."
-        await interaction.response.send_message(changes_summary)
+
+        await interaction.followup.send(changes_summary)
 
     except Exception as e:
-        await interaction.response.send_message(f'Something went wrong while updating player data')
+        await interaction.followup.send(f'Something went wrong while updating player data', ephemeral=True)
         await log_commands(e)
-
