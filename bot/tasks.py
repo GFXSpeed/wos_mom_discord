@@ -1,4 +1,5 @@
 import discord
+import asyncio
 from .logging import log_event
 from discord.ext import tasks
 from datetime import datetime, timedelta, timezone
@@ -22,23 +23,28 @@ async def check_guesswho():
 async def before_check_threads():
     await bot.wait_until_ready()
 
-# Dictionary zur Nachverfolgung der gesendeten Erinnerungen
-sent_reminders = {}
 
+sent_reminders = {}
 async def get_next_event():
     guild = bot.get_guild(GUILD_ID)
-    events = await guild.fetch_scheduled_events()
+
+    try:
+        events = await guild.fetch_scheduled_events()
+
+    except discord.errors.DiscordServerError as e:
+        print(f'Server Error on calling Event {e}. Retrying in 10 seconds')
+        await asyncio.sleep(10)
+        events = await guild.fetch_scheduled_events()
 
     if events:
-        # Nur Events in der Zukunft berücksichtigen
         future_events = [event for event in events if event.start_time > datetime.now(timezone.utc)]
         
         if future_events:
-            # Finde das nächste Event nach Startzeit sortiert
             upcoming_event = min(future_events, key=lambda e: e.start_time)
             return upcoming_event
         else:
             print(f'Keine zukünftigen Events vorhanden.')
+    
     return None
 
 @tasks.loop(minutes=1)
