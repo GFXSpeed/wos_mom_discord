@@ -68,7 +68,7 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
 
     queue = asyncio.Queue()
 
-    async def worker(queue):
+    async def redeem_worker(queue):
         nonlocal redeem_success, redeem_failed, redeem_error, retry_ids
         while True:
             pid = await queue.get()
@@ -110,19 +110,21 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
             await queue.put(pid)
 
         with ThreadPoolExecutor(max_workers=4) as executor:
-            workers = [asyncio.create_task(worker(queue)) for _ in range(4)]
+            tasks = [asyncio.create_task(redeem_worker(queue)) for _ in range(4)]
             await queue.join()
 
-            for worker in workers:
+            for task in tasks:
                 queue.put_nowait(None)
-            await asyncio.gather(*workers)
+            await asyncio.gather(*tasks)
 
         if retry_ids and total_attempts < max_attempts:
+            print(f'Starting next try with {len(retry_ids)} players. It´s the {total_attempts} try')
             player_ids = retry_ids
             retry_ids = []
         else:
+            print(f'No player left or max attempts reached after {total_attempts} tries')
             break
-
+    print(f'Summary for code: {code}, success: {redeem_success}, failed: {redeem_failed}, error: {redeem_error}, attempts: {total_attempts}')
     await send_summary(thread, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts)
 
 async def send_summary(channel, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts):
