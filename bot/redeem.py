@@ -139,6 +139,6 @@ async def send_summary(channel, code, playercount, redeem_success, redeem_failed
     elif redeem_error == 2:
         embed.set_footer(text="Code expired. Exited early.")
     elif redeem_error == 3:
-        embed.set_footer(text="Unknown status for one or more ID. Will retry one time")
+        embed.set_footer(text="Unknown status for one or more ID.")
 
     await channel.send(embed=embed)
