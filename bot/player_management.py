@@ -3,7 +3,7 @@ import json
 import discord
 from discord import app_commands
 from bot import bot, allowed_roles, SELENIUM
-from .logging import log_commands
+from .logging import log_commands, log_event
 
 async def load_player_data(file_name):
     file_path = os.path.join("/home/container", file_name)
@@ -176,13 +176,16 @@ async def update_player_data(player_id=None, player_name=None,player_data=None):
                 if is_valid:
                     if new_name != player_name:
                         updated_players.append((player_id, player_name, new_name))
-                        updated_data[player_id] = new_name  
+                        updated_data[player_id] = new_name
+                        await log_event('Player Name Updated', player_id=player_id, old_name=player_name, new_name=new_name)  
                     else:
                         updated_data[player_id] = player_name
                 else:
                     removed_players.append(player_id)
+                    await log_event('Player Removed', player_id=player_id)
             except Exception as e:
                 print(f"Error processing player ID {player_id}: {e}")
+                await log_event('Update Player Error', player_id=player_id, error=str(e))
                 continue
 
         await save_player_data('players.json', updated_data)
@@ -197,6 +200,7 @@ async def update_player_data(player_id=None, player_name=None,player_data=None):
                     print(f"Updating player name for {player_id} from {existing_data[player_id]} to {new_name}")
                     existing_data[player_id] = new_name
                     updated_players.append(player_id)
+                    await log_event('Player Name Updated', player_id=player_id, old_name=existing_data[player_id], new_name=new_name)
 
         await save_player_data("players.json", existing_data)
         return updated_players, removed_players
