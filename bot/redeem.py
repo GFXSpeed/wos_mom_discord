@@ -8,7 +8,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import NoSuchElementException
 from concurrent.futures import ThreadPoolExecutor
 from .logging import log_redeem_attempt
-from .player_management import load_player_data
+from .player_management import load_player_data, update_player_data
 from bot import bot, SELENIUM
 
 op = Options()
@@ -60,8 +60,10 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
     redeem_error = 0
     retry_ids = []
 
-    playercount = len(player_ids)
+    update_player = {}
+    updated_players = []
 
+    playercount = len(player_ids)
     thread = await ctx.channel.create_thread(name=f'Code: {code}', auto_archive_duration=4320, type=discord.ChannelType.public_thread)
     starting_info = f'Starting to redeem code **{code}** for {playercount} players. This could take up to {(12*playercount)/60} minutes'
     await thread.send(starting_info)
@@ -69,7 +71,7 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
     queue = asyncio.Queue()
 
     async def redeem_worker(queue):
-        nonlocal redeem_success, redeem_failed, redeem_error, retry_ids
+        nonlocal redeem_success, redeem_failed, redeem_error, retry_ids, update_player
         while True:
             pid = await queue.get()
             if pid is None:
@@ -77,6 +79,8 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
 
             result, player = await loop.run_in_executor(executor, redeem_code_for_player, code, pid)
             try:
+                update_player[pid] = player
+
                 if "not found" in result:
                     redeem_error = 1
                 elif "Expired" in result:
@@ -100,6 +104,7 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
 
             except Exception as e:
                 await log_redeem_attempt(pid, player, code, e)
+                queue.task_done()
                 break
 
     while total_attempts < max_attempts:
@@ -125,14 +130,24 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
             print(f'No player left or max attempts reached after {total_attempts} tries')
             break
     print(f'Summary for code: {code}, success: {redeem_success}, failed: {redeem_failed}, error: {redeem_error}, attempts: {total_attempts}')
-    await send_summary(thread, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts)
 
-async def send_summary(channel, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts):
+    print(f'Updating players')
+    try:
+        print(f'Input: {update_player}')
+        updated_players, _ = await update_player_data(player_data=update_player)
+        updated_player_count = len(updated_players)
+    except Exception as e:
+        print(f'Error while updating players: {e}')
+        return
+    
+    await send_summary(thread, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts, updated_player_count)
+
+async def send_summary(channel, code, playercount, redeem_success, redeem_failed, redeem_error, total_attempts, updated_player_count):
     embed = discord.Embed(title=f"Stats for giftcode: {code}")
     embed.add_field(name="Players in database: ", value=f"{playercount}", inline=False)
     embed.add_field(name="Successfully redeemed for", value=f"{redeem_success} players", inline=True)
     embed.add_field(name="Already used or failed for", value=f"{redeem_failed} players", inline=True)
-    embed.set_footer(text=f"Redeemed in {total_attempts} tries")
+    embed.set_footer(text=f"Redeemed in {total_attempts} tries. Updated {updated_player_count} names.")
 
     if redeem_error == 1:
         embed.set_footer(text="Code did not exist. Exited early.")

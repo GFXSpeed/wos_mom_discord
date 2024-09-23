@@ -67,3 +67,7 @@ async def check_event_reminder():
             sent_reminders[event_id] = True
         elif now > event_start_time:
             print(f'[DEBUG] Event **{upcoming_event.name}** already started.')
+
+@check_event_reminder.before_loop
+async def before_check_event_reminder():
+    await bot.wait_until_ready()

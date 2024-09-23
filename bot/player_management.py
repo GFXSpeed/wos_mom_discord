@@ -3,7 +3,7 @@ import json
 import discord
 from discord import app_commands
 from bot import bot, allowed_roles, SELENIUM
-from .logging import log_commands
+from .logging import log_commands, log_event
 
 async def load_player_data(file_name):
     file_path = os.path.join("/home/container", file_name)
@@ -158,42 +158,53 @@ async def list_ids(interaction: discord.Interaction):
         await interaction.response.send_message("There are no player IDs in the database.")
 
 
-
-async def update_player_data(file_name):
-    player_data = await load_player_data(file_name)
-    if not player_data:
-        return [], []
-
-    updated_data = {}  
+async def update_player_data(player_id=None, player_name=None,player_data=None):
     removed_players = []
     updated_players = []
+    
+    if player_data is None:
+        try: 
+           player_data = await load_player_data('players.json')
+        except FileNotFoundError as e:
+            return [], []
 
-    for player_id, player_name in player_data.items():
-        try:
-            is_valid, new_name = await is_valid_player_id(player_id)
-            if is_valid:
-                if new_name != player_name:
-                    updated_players.append((player_id, player_name, new_name))
-                    updated_data[player_id] = new_name  
+        updated_data = {}  
+
+        for player_id, player_name in player_data.items():
+            try:
+                is_valid, new_name = await is_valid_player_id(player_id)
+                if is_valid:
+                    if new_name != player_name:
+                        updated_players.append((player_id, player_name, new_name))
+                        updated_data[player_id] = new_name
+                        await log_event('Player Name Updated', player_id=player_id, old_name=player_name, new_name=new_name)  
+                    else:
+                        updated_data[player_id] = player_name
                 else:
-                    updated_data[player_id] = player_name
-            else:
-                removed_players.append(player_id)
-        except Exception as e:
-            print(f"Error processing player ID {player_id}: {e}")
-            continue
+                    removed_players.append(player_id)
+                    await log_event('Player Removed', player_id=player_id)
+            except Exception as e:
+                print(f"Error processing player ID {player_id}: {e}")
+                await log_event('Update Player Error', player_id=player_id, error=str(e))
+                continue
 
-    for player_id in removed_players:
-        if player_id in updated_data:
-            del updated_data[player_id]
+        await save_player_data('players.json', updated_data)
+        return updated_players, removed_players
 
-    try:
-        await save_player_data(file_name, updated_data)
-    except Exception as e:
-        print(f"Error saving updated player data")
-        log_commands(e)
+    else:
+        existing_data = await load_player_data('players.json')
 
-    return updated_players, removed_players
+        for player_id, new_name in player_data.items():
+            if player_id in existing_data:
+                if existing_data[player_id] != new_name:
+                    print(f"Updating player name for {player_id} from {existing_data[player_id]} to {new_name}")
+                    existing_data[player_id] = new_name
+                    updated_players.append(player_id)
+                    await log_event('Player Name Updated', player_id=player_id, old_name=existing_data[player_id], new_name=new_name)
+
+        await save_player_data("players.json", existing_data)
+        return updated_players, removed_players
+
 
 class PlayerActionView(discord.ui.View):
     def __init__(self, player_id, player_name, file_name):
@@ -233,7 +244,7 @@ async def update_players(interaction: discord.Interaction):
     try:
         await interaction.response.send_message("Updating players. This could take a while...", ephemeral=True)
 
-        updated_players, invalid_players = await update_player_data('players.json')
+        updated_players, invalid_players = await update_player_data()
         changes_summary = "Player data update completed.\n"
 
         if updated_players:
