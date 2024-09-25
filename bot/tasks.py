@@ -66,19 +66,6 @@ async def event_reminder():
         event_name = next_event.name
         print(f'[DEBUG] Next Event: {event_id}, {event_name} starts at: {start_time}')
 
-@bot.event
-async def on_scheduled_event_update(before, after):
-    event_id = after.id
-    old_start_time = before.start_time
-    old_name = before.name
-    new_start_time = after.start_time
-    new_name = after.name
-
-    if old_start_time != new_start_time or old_name != new_name:
-        tracked_events[event_id] = (new_start_time, new_name)
-        print(f'[DEBUG] Event {old_name} changed. New Details: Name: {new_name}, Time: {new_start_time}')
-
-
 @event_reminder.before_loop
 async def before_event_reminder():
     await bot.wait_until_ready()

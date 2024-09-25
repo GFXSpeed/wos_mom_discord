@@ -46,3 +46,17 @@ async def on_member_join(member):
 #            await log_event("SET_ROLE", member = member.name, role = {transfer_role})
 #        else:
 #            print(f'{member.name} is not on the old discord. Skipping')
+
+
+
+@bot.event
+async def on_scheduled_event_update(before, after):
+    event_id = after.id
+    old_start_time = before.start_time
+    old_name = before.name
+    new_start_time = after.start_time
+    new_name = after.name
+
+    if old_start_time != new_start_time or old_name != new_name:
+        print(f'[DEBUG] Event {old_name} changed. New Details: Name: {new_name}, Time: {new_start_time}')
+        await log_event("EVENT_UPDATE", old_name = old_name, new_name = new_name, old_time= old_start_time, new_time = new_start_time)
