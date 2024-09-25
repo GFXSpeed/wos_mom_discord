@@ -6,9 +6,9 @@ from discord import Intents, app_commands
 load_dotenv(find_dotenv())
 TOKEN = os.getenv("DISCORD_TOKEN")
 SELENIUM = os.getenv("SELENIUM_URL")
-GUILD_ID = os.getenv("GUILD_ID")
-WHO_IS = os.getenv("WHO_IS_CHANNEL")
-ANNOUNCEMENT = os.getenv("ANNOUNCEMENT_CHANNEL")
+GUILD_ID = int(os.getenv("GUILD_ID"))
+WHO_IS = int(os.getenv("WHO_IS_CHANNEL"))
+ANNOUNCEMENT = int(os.getenv("ANNOUNCEMENT_CHANNEL"))
 
 intents = Intents.default()
 intents.message_content = True

@@ -2,7 +2,7 @@ import re
 import discord
 from bot import bot
 from .redeem import use_codes
-from .tasks import check_guesswho, check_event_reminder
+from .tasks import check_guesswho, event_reminder
 from .logging import log_event
 
 @bot.event
@@ -10,7 +10,7 @@ async def on_ready():
     await bot.tree.sync()
     await bot.change_presence(activity=discord.Game("Whiteout Survival"), status=discord.Status.online)
     check_guesswho.start()
-    check_event_reminder.start()
+    event_reminder.start()
     print(f'Logged in as {bot.user.name}')
 
 @bot.event

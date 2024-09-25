@@ -24,50 +24,61 @@ async def before_check_threads():
     await bot.wait_until_ready()
 
 
-sent_reminders = {}
-async def get_next_event():
+tracked_events = set()
+@tasks.loop(minutes=1)
+async def event_reminder():
     guild = bot.get_guild(GUILD_ID)
 
-    try:
+    if guild: 
         events = await guild.fetch_scheduled_events()
+        now = datetime.now(timezone.utc)
+        current_event_ids = {event.id for event in events}
 
-    except discord.errors.DiscordServerError as e:
-        print(f'Server Error on calling Event {e}. Retrying in 10 seconds')
-        await asyncio.sleep(10)
-        events = await guild.fetch_scheduled_events()
+    if not events:
+        print('[DEBUG] No Events found')
+        return
 
-    if events:
-        future_events = [event for event in events if event.start_time > datetime.now(timezone.utc)]
-        
-        if future_events:
-            upcoming_event = min(future_events, key=lambda e: e.start_time)
-            return upcoming_event
-        else:
-            print(f'Keine zukünftigen Events vorhanden.')
-    
-    return None
+    for event_id in list(tracked_events):
+        if event_id not in current_event_ids:
+            tracked_events.remove(event_id)
+            print(f'[DEBUG] Event-ID {event_id} was deleted')
 
-@tasks.loop(minutes=1)
-async def check_event_reminder():
-    now = datetime.now(timezone.utc)
-    upcoming_event = await get_next_event()
+    for event in events: 
+        start_time = event.start_time
+        event_id = event.id
+        event_name = event.name
 
-    if upcoming_event:
-        event_start_time = upcoming_event.start_time
-        event_id = upcoming_event.id
+        if start_time - timedelta(minutes=10) <= now < start_time:
+            if event_id not in tracked_events:
+                channel = bot.get_channel(ANNOUNCEMENT)
+                await channel.send(f'@everyone Event **{event.name}** starts in 10 minutes!')
+                tracked_events.add(event_id)
 
-        #print(f'[DEBUG] Zeit: {now}; Nächstes Event: {event_id}, {upcoming_event.name}: {event_start_time}')
+    next_event = min(
+    (event for event in events if event.start_time > now),
+    key = lambda e: e.start_time,
+    default=None
+    )
 
-        reminder_time = event_start_time - timedelta(minutes=10)
+    if next_event:
+        start_time = next_event.start_time
+        event_id = next_event.id
+        event_name = next_event.name
+        print(f'[DEBUG] Next Event: {event_id}, {event_name} starts at: {start_time}')
 
-        if reminder_time <= now < event_start_time and not sent_reminders.get(event_id, False):
-            channel = bot.get_channel(ANNOUNCEMENT)
-            await channel.send(f'@everyone Event **{upcoming_event.name}** starts in 10 minutes!')
+@bot.event
+async def on_scheduled_event_update(before, after):
+    event_id = after.id
+    old_start_time = before.start_time
+    old_name = before.name
+    new_start_time = after.start_time
+    new_name = after.name
 
-            sent_reminders[event_id] = True
-        elif now > event_start_time:
-            print(f'[DEBUG] Event **{upcoming_event.name}** already started.')
+    if old_start_time != new_start_time or old_name != new_name:
+        tracked_events[event_id] = (new_start_time, new_name)
+        print(f'[DEBUG] Event {old_name} changed. New Details: Name: {new_name}, Time: {new_start_time}')
 
-@check_event_reminder.before_loop
-async def before_check_event_reminder():
+
+@event_reminder.before_loop
+async def before_event_reminder():
     await bot.wait_until_ready()
