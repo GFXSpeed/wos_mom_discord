@@ -46,7 +46,6 @@ async def event_reminder():
     for event in events: 
         start_time = event.start_time
         event_id = event.id
-        event_name = event.name
 
         if start_time - timedelta(minutes=10) <= now < start_time:
             if event_id not in tracked_events:
