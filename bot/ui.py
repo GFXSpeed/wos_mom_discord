@@ -1,5 +1,5 @@
 import discord
-from .player_management import load_player_data, save_player_data
+from bot import bot
 
 class PlayerActionView(discord.ui.View):
     def __init__(self, player_id, player_name, file_name):
@@ -17,6 +17,7 @@ class PlayerActionView(discord.ui.View):
         await self.remove_player(interaction, delete=False)
 
     async def remove_player(self, interaction: discord.Interaction, delete: bool):
+        from .player_management import load_player_data, save_player_data
         player_data = await load_player_data(self.file_name)
         if delete:
             if self.player_id in player_data:
