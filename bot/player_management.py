@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from bot import bot, allowed_roles, SELENIUM
 from .logging import log_commands, log_event
+from .ui import PlayerActionView
 
 async def load_player_data(file_name):
     file_path = os.path.join("/home/container", file_name)
@@ -204,38 +205,6 @@ async def update_player_data(player_id=None, player_name=None,player_data=None):
 
         await save_player_data("players.json", existing_data)
         return updated_players, removed_players
-
-
-class PlayerActionView(discord.ui.View):
-    def __init__(self, player_id, player_name, file_name):
-        super().__init__()
-        self.player_id = player_id
-        self.player_name = player_name
-        self.file_name = file_name
-
-    @discord.ui.button(label="Delete", style=discord.ButtonStyle.danger)
-    async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.remove_player(interaction, delete=True)
-
-    @discord.ui.button(label="Keep", style=discord.ButtonStyle.success)
-    async def retain(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.remove_player(interaction, delete=False)
-
-    async def remove_player(self, interaction: discord.Interaction, delete: bool):
-        player_data = await load_player_data(self.file_name)
-        if delete:
-            if self.player_id in player_data:
-                del player_data[self.player_id]
-                await save_player_data(self.file_name, player_data)
-                await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) has been deleted.", ephemeral=True)
-            else:
-                await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) was not found.", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) has been retained.", ephemeral=True)
-
-        self.delete.disabled = True
-        self.retain.disabled = True
-        await interaction.message.edit(view=self)
 
 @bot.tree.command(name="update_player", description="Updates all player data to ensure validity.")
 @app_commands.checks.has_any_role(*allowed_roles)
