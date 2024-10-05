@@ -20,7 +20,7 @@ allowed_roles = ["Admin", "R4", "R5"]
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 def load_modules():
-    from . import logging, events, guesswho, player_management, user_commands, redeem
+    from . import logging, events, guesswho, player_management, user_commands, redeem, ui 
     print("Module geladen")
 
 def run():
