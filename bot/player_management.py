@@ -198,9 +198,9 @@ async def update_player_data(player_id=None, player_name=None,player_data=None):
             if player_id in existing_data:
                 if existing_data[player_id] != new_name:
                     print(f"Updating player name for {player_id} from {existing_data[player_id]} to {new_name}")
+                    await log_event('Player Name Updated', player_id=player_id, old_name=existing_data[player_id], new_name=new_name)
                     existing_data[player_id] = new_name
                     updated_players.append(player_id)
-                    await log_event('Player Name Updated', player_id=player_id, old_name=existing_data[player_id], new_name=new_name)
 
         await save_player_data("players.json", existing_data)
         return updated_players, removed_players
