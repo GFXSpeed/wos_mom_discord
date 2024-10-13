@@ -134,6 +134,10 @@ async def list_ids(interaction: discord.Interaction):
     player_data = await load_player_data('players.json')
     
     if player_data:
+
+        thread = await interaction.channel.create_thread(name="Player List", auto_archive_duration=60, type=discord.ChannelType.public_thread)
+        thread_url = f"https://discord.com/channels/{interaction.guild.id}/{thread.id}"
+        await interaction.response.send_message(f"IDs will be listed in this [thread]({thread_url}).")
         embeds = []
         embed = discord.Embed(title="Current Player IDs and Names", color=discord.Color.blue())
         field_count = 0
@@ -150,11 +154,11 @@ async def list_ids(interaction: discord.Interaction):
             embeds.append(embed)
         
         if len(embeds) == 1:
-            await interaction.response.send_message(embed=embeds[0])
+            await thread.send(embed=embeds[0])
         else:
-            await interaction.response.send_message(embed=embeds[0])
+            await thread.send(embed=embeds[0])
             for e in embeds[1:]:
-                await interaction.followup.send(embed=e)
+                await thread.send(embed=e)
     else:
         await interaction.response.send_message("There are no player IDs in the database.")
 
