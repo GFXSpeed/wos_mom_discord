@@ -54,42 +54,47 @@ def redeem_code_for_player(code, pid):
         driver.quit()
     return result, player
 
+class RedeemStatus:
+    def __init__(self):
+        self.redeem_success = 0
+        self.redeem_failed = 0
+        self.code_invalid = False
+        self.code_expired = False
+        self.retry_ids = []
+        self.update_player = {}
+
 #worker to redeem ids in multiple instances
-async def redeem_worker(queue, executor, loop, code, redeem_success, redeem_failed, code_invalid, code_expired, retry_ids, update_player):
+async def redeem_worker(queue, executor, loop, code, status):
     while True:
         pid = await queue.get()
         if pid is None:
             print('Worker received stop signal, terminating.')
             queue.task_done()
             break
-
         result, player = await loop.run_in_executor(executor, redeem_code_for_player, code, pid)
         try:
-            update_player[pid] = player
+            status.update_player[pid] = player
             logging.info(f'Updating player: {player} with result: {result}')
             if "not found" in result:
-                code_invalid = True
+                status.code_invalid = True
             elif "Expired" in result:
-                code_expired = True
+                status.code_expired = True
             elif "Redeemed" in result:
-                redeem_success += 1
+                status.redeem_success += 1
             elif "Already claimed" in result:
-                redeem_failed += 1
+                status.redeem_failed += 1
             else:
-                redeem_failed += 1
-                retry_ids.append(pid)
-
-            if code_invalid or code_expired:
+                status.redeem_failed += 1
+                status.retry_ids.append(pid)
+            if status.code_invalid or status.code_expired:
                 while not queue.empty():
                     queue.get_nowait()
                     queue.task_done()
                 break
-
         except Exception as e:
             await log_redeem_attempt(pid, player, code, e)
             queue.task_done()
             break
-
         finally:
             await log_redeem_attempt(pid, player, code, result)
             queue.task_done()
@@ -99,73 +104,55 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
     if player_ids is None:
         player_data = await load_player_data('players.json')
         player_ids = list(player_data.keys())
-    
+
     total_attempts = 1
     max_attempts = retry_limit + 1
-    redeem_success = 0
-    redeem_failed = 0
-    retry_ids = []
-
-    code_invalid = False
-    code_expired = False
-
-    update_player = {}
-    updated_players = []
-
+    status = RedeemStatus()
     playercount = len(player_ids)
     thread = await ctx.channel.create_thread(name=f'Code: {code}', auto_archive_duration=4320, type=discord.ChannelType.public_thread)
     starting_info = f'Starting to redeem code **{code}** for {playercount} players. This could take up to {(12*playercount)/60} minutes'
     await thread.send(starting_info)
-
     queue = asyncio.Queue()
+
     while total_attempts <= max_attempts:
         loop = asyncio.get_event_loop()
-
         if not player_ids:
             print('No players left to process.')
             break
-
         print(f"Adding {len(player_ids)} players to the queue for attempt {total_attempts}.")
         for pid in player_ids:
             await queue.put(pid)
-
         with ThreadPoolExecutor(max_workers=4) as executor:
-            await queue.put(pid)
-
-            tasks = [asyncio.create_task(redeem_worker(queue, executor, loop, code, redeem_success, redeem_failed, code_invalid, code_expired, retry_ids, update_player)) for _ in range(4)]
+            tasks = [asyncio.create_task(redeem_worker(queue, executor, loop, code, status)) for _ in range(4)]
             print(f'Worker task created, waiting for queue to be processed')
             await queue.join()
-
             for _ in range(4):
                 await queue.put(None)
             print("Waiting for all worker tasks to complete")
             await asyncio.gather(*tasks)
-
-
-        if retry_ids and total_attempts < max_attempts:
-            print(f'Starting next try with {len(retry_ids)} players. It´s the {total_attempts} try')
-            player_ids = retry_ids.copy()
+        if status.retry_ids and total_attempts < max_attempts:
+            print(f'Starting next try with {len(status.retry_ids)} players. It´s the {total_attempts} try')
+            player_ids = status.retry_ids.copy()
             print(f'playerids: {player_ids}')
-            retry_ids.clear()
-            print(f'retry ids: {retry_ids}')
+            status.retry_ids.clear()
+            print(f'retry ids: {status.retry_ids}')
         else:
             print(f'No player left or max attempts reached after {total_attempts} tries')
             break
-    total_attempts += 1
+        total_attempts += 1
 
-    print(f'Summary for code: {code}, success: {redeem_success}, failed: {redeem_failed}, attempts: {total_attempts}')
-
+    print(f'Summary for code: {code}, success: {status.redeem_success}, failed: {status.redeem_failed}, attempts: {total_attempts}')
     print(f'Updating players')
     try:
-        print(f'Input: {update_player}')
-        updated_players, _ = await update_player_data(player_data=update_player)
+        print(f'Input: {status.update_player}')
+        updated_players, _ = await update_player_data(player_data=status.update_player)
         updated_player_count = len(updated_players)
     except Exception as e:
         print(f'Error while updating players: {e}')
         return
-    
     finally:
-        await send_summary(thread, code, playercount, redeem_success, redeem_failed, code_invalid, code_expired, total_attempts, updated_player_count)
+        print("Sending summary")
+        await send_summary(thread, code, playercount, status.redeem_success, status.redeem_failed, status.code_invalid, status.code_expired, total_attempts, updated_player_count)
 
 async def send_summary(channel, code, playercount, redeem_success, redeem_failed, code_invalid, code_expired, total_attempts, updated_player_count):
     embed = discord.Embed(title=f"Stats for giftcode: {code}")
@@ -173,10 +160,9 @@ async def send_summary(channel, code, playercount, redeem_success, redeem_failed
     embed.add_field(name="Successfully redeemed for", value=f"{redeem_success} players", inline=True)
     embed.add_field(name="Already used or failed for", value=f"{redeem_failed} players", inline=True)
     embed.set_footer(text=f"Redeemed in {total_attempts} tries. Updated {updated_player_count} names.")
-
     if code_invalid:
         embed.set_footer(text="Code did not exist. Exited early.")
     elif code_expired:
         embed.set_footer(text="Code expired. Exited early.")
-
     await channel.send(embed=embed)
+    print("Done")
