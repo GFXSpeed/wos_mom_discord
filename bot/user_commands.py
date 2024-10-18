@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 from bot import bot, allowed_roles
-from .logging import log_commands
+from .custom_logging import log_commands
 from .redeem import use_codes
 
 @bot.tree.command(name="info", description="What this bot is about")

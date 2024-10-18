@@ -3,8 +3,10 @@ import json
 import discord
 from discord import app_commands
 from bot import bot, allowed_roles, SELENIUM
-from .logging import log_commands, log_event
+from .custom_logging import log_commands, log_event
 from .ui import PlayerActionView
+
+SELENIUM_INSTANCE = SELENIUM + "/wd/hub"
 
 async def load_player_data(file_name):
     file_path = os.path.join("/home/container", file_name)
@@ -38,7 +40,7 @@ async def is_valid_player_id(player_id):
     op.add_argument("--ignore-ssl-errors=yes")
     op.add_argument("--ignore-certificate-errors")
 
-    driver = webdriver.Remote(command_executor=SELENIUM, options=op)
+    driver = webdriver.Remote(command_executor=SELENIUM_INSTANCE, options=op)
     try:
         driver.get("https://wos-giftcode.centurygame.com/")
         await asyncio.sleep(2)

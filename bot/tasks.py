@@ -1,6 +1,6 @@
 import discord
 import asyncio
-from .logging import log_event
+from .custom_logging import log_event
 from discord.ext import tasks
 from datetime import datetime, timedelta, timezone
 from bot import bot, GUILD_ID, WHO_IS, ANNOUNCEMENT

@@ -3,6 +3,8 @@ from dotenv import load_dotenv, find_dotenv
 from discord.ext import commands
 from discord import Intents, app_commands
 
+from . import custom_logging
+
 load_dotenv(find_dotenv())
 TOKEN = os.getenv("DISCORD_TOKEN")
 SELENIUM = os.getenv("SELENIUM_URL")
@@ -20,7 +22,7 @@ allowed_roles = ["Admin", "R4", "R5"]
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 def load_modules():
-    from . import logging, events, guesswho, player_management, user_commands, redeem, ui 
+    from . import events, guesswho, player_management, user_commands, redeem, ui 
     print("Module geladen")
 
 def run():

@@ -3,7 +3,7 @@ import discord
 from bot import bot
 from .redeem import use_codes
 from .tasks import check_guesswho, event_reminder
-from .logging import log_event
+from .custom_logging import log_event
 
 @bot.event
 async def on_ready():

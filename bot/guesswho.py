@@ -3,7 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from datetime import timedelta
 from bot import bot, WHO_IS
-from .logging import log_commands
+from .custom_logging import log_commands
 
 @bot.tree.command(name="guess", description="**USE IN PRIVATE** Send a picture anonymously so others can guess who you are. Usage: /guess <image>")
 @app_commands.describe(image="Attach an image (png, jpg, jpeg, gif)")
