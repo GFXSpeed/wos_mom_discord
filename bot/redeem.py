@@ -157,7 +157,7 @@ async def use_codes(ctx, code, player_ids=None, retry_limit=4):
                 tasks = [asyncio.create_task(redeem_worker(queue, executor, loop, code, status)) for _ in range(workers)]
                 print(f'Worker task created, waiting for queue to be processed')
                 await queue.join()
-                for _ in range(4):
+                for _ in range(workers):
                     await queue.put(None)
                 print("Waiting for all worker tasks to complete")
                 await asyncio.gather(*tasks)
