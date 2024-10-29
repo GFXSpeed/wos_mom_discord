@@ -1,12 +1,13 @@
 import os
 import json
 import discord
+import httpx
 from discord import app_commands
+from discord.ext import commands
+from .wos_api import get_playerdata
 from bot import bot, allowed_roles, SELENIUM
 from .custom_logging import log_commands, log_event
 from .ui import PlayerActionView
-
-SELENIUM_INSTANCE = SELENIUM + "/wd/hub"
 
 async def load_player_data(file_name):
     file_path = os.path.join("/home/container", file_name)
@@ -28,42 +29,18 @@ async def save_player_data(file_name, data):
     except Exception as e:
         print(f"Error on saving '{file_name}': {e}")
 
-async def is_valid_player_id(player_id):
-    from selenium import webdriver
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.chrome.options import Options
-    from selenium.common.exceptions import NoSuchElementException
-    import asyncio
+async def get_player_choices(interaction: discord.Interaction, current: str):
+    player_data = await load_player_data('players.json')
+    choices = [
+        app_commands.Choice(name=f"{name} (ID: {pid})", value=pid)
+        for pid, name in player_data.items() if current.lower() in name.lower() or current in pid
+    ]
+    return choices[:25]  
 
-    op = Options()
-    op.add_argument("--disable-gpu")
-    op.add_argument("--ignore-ssl-errors=yes")
-    op.add_argument("--ignore-certificate-errors")
-
-    driver = webdriver.Remote(command_executor=SELENIUM_INSTANCE, options=op)
-    try:
-        driver.get("https://wos-giftcode.centurygame.com/")
-        await asyncio.sleep(2)
-        driver.find_element(By.XPATH, "//input[@placeholder='Player ID']").send_keys(player_id)
-        driver.find_element(By.XPATH, "//*[@id='app']/div/div/div[3]/div[2]/div[1]/div[1]/div[2]/span").click()
-        await asyncio.sleep(2)
-        player_name = driver.find_element(By.XPATH, "/html/body/div/div/div/div[3]/div[2]/div[1]/div[1]/p[1]").text
-        print(f'PlayerID {player_id} is: {player_name}')
-        return True, player_name
-    except NoSuchElementException:
-        print(f'Invalid PlayerID: {player_id}')
-        return False, None
-    except Exception as e:
-        print(f"Error: {e}")
-        return False, None
-    finally:
-        driver.quit()
 
 @bot.tree.command(name="add_id", description="Adds a player ID. Usage: /add_id <player_id>")
 async def add_id(interaction: discord.Interaction, player_id: str):
     await interaction.response.defer()
-
-    await log_commands(interaction)
     player_data = await load_player_data('players.json')
 
     try:
@@ -71,15 +48,27 @@ async def add_id(interaction: discord.Interaction, player_id: str):
             player_name = player_data[player_id]
             await interaction.followup.send(f'Player ID {player_id} already exists with name **{player_name}**.')
         else:
-            is_valid, player_name = await is_valid_player_id(player_id)
-            if is_valid:
+            async with httpx.AsyncClient() as client:
+                playerdata = await get_playerdata(player_id, client)
+
+            if playerdata:
+                player_name = playerdata.get("nickname")
+                avatar_image = playerdata.get("avatar_image")
+                stove_lv_content = playerdata.get("stove_lv_content")
                 player_data[player_id] = player_name
                 await save_player_data('players.json', player_data)
-                await interaction.followup.send(f'Player ID {player_id} with name **{player_name}** added.')
+
+                embed = discord.Embed(title="", color=discord.Color.blue())
+                embed.set_author(name=player_name, icon_url=stove_lv_content) 
+                embed.add_field(name="Player-ID", value=player_id, inline=False)
+                embed.set_thumbnail(url=avatar_image)
+                await interaction.followup.send(embed=embed)
             else:
                 await interaction.followup.send(f'Player ID {player_id} is not valid.')
     except Exception as e:
         await interaction.followup.send(f'Something went wrong: {e}')
+
+
 
 @bot.tree.command(name="remove_id", description="Removes player IDs. R4+ only. Usage: /remove_id <player_id, player_id>")
 @app_commands.checks.has_any_role(*allowed_roles)
@@ -165,52 +154,67 @@ async def list_ids(interaction: discord.Interaction):
         await interaction.response.send_message("There are no player IDs in the database.")
 
 
-async def update_player_data(player_id=None, player_name=None,player_data=None):
+@bot.tree.command(name="details", description="Shows details of a player. Usage: /details <player_id>")
+@app_commands.autocomplete(player_id=get_player_choices)
+async def details(interaction: discord.Interaction, player_id: str):
+    await interaction.response.defer()
+    
+    async with httpx.AsyncClient() as client:
+        player_data = await get_playerdata(player_id, client)
+    
+    if player_data is None:
+        await interaction.followup.send(f"Player ID {player_id} is not valid or could not be found.")
+        return
+    
+    nickname = player_data.get("nickname", "Unknown")
+    avatar_image = player_data.get("avatar_image")
+    stove_lv_content = player_data.get("stove_lv_content")
+    stove_lv = player_data.get("stove_lv", "Unknown")
+
+    embed = discord.Embed(title="", color=discord.Color.blue())
+    embed.set_author(name=nickname, icon_url=stove_lv_content) 
+    embed.add_field(name="Player-ID", value=player_id, inline=False)
+    embed.add_field(name="Furnance-Level", value=stove_lv)
+    embed.set_thumbnail(url=avatar_image)
+
+    await interaction.followup.send(embed=embed)
+
+
+async def update_player_data(player_data=None):
     removed_players = []
     updated_players = []
     
     if player_data is None:
         try: 
-           player_data = await load_player_data('players.json')
-        except FileNotFoundError as e:
-            return [], []
+            player_data = await load_player_data('players.json')
+        except FileNotFoundError:
+            return [], [] 
 
-        updated_data = {}  
+    updated_data = {}
 
-        for player_id, player_name in player_data.items():
+    async with httpx.AsyncClient() as client:
+        for player_id, old_name in player_data.items():
             try:
-                is_valid, new_name = await is_valid_player_id(player_id)
-                if is_valid:
-                    if new_name != player_name:
-                        updated_players.append((player_id, player_name, new_name))
+                api_data = await get_playerdata(player_id, client)
+                if api_data:
+                    new_name = api_data.get("nickname")
+                    
+                    if new_name and new_name != old_name:
+                        updated_players.append((player_id, old_name, new_name))
                         updated_data[player_id] = new_name
-                        await log_event('Player Name Updated', player_id=player_id, old_name=player_name, new_name=new_name)  
+                        await log_event('Player Name Updated', player_id=player_id, old_name=old_name, new_name=new_name)
                     else:
-                        updated_data[player_id] = player_name
+                        updated_data[player_id] = old_name
                 else:
-                    removed_players.append(player_id)
-                    await log_event('Player Removed', player_id=player_id)
+                    removed_players.append((player_id, old_name))
+                    await log_event('Added to remove prompt:', player_id=player_id)
             except Exception as e:
                 print(f"Error processing player ID {player_id}: {e}")
                 await log_event('Update Player Error', player_id=player_id, error=str(e))
                 continue
 
-        await save_player_data('players.json', updated_data)
-        return updated_players, removed_players
-
-    else:
-        existing_data = await load_player_data('players.json')
-
-        for player_id, new_name in player_data.items():
-            if player_id in existing_data:
-                if existing_data[player_id] != new_name:
-                    print(f"Updating player name for {player_id} from {existing_data[player_id]} to {new_name}")
-                    await log_event('Player Name Updated', player_id=player_id, old_name=existing_data[player_id], new_name=new_name)
-                    existing_data[player_id] = new_name
-                    updated_players.append(player_id)
-
-        await save_player_data("players.json", existing_data)
-        return updated_players, removed_players
+    await save_player_data('players.json', updated_data)
+    return updated_players, removed_players
 
 @bot.tree.command(name="update_player", description="Updates all player data to ensure validity.")
 @app_commands.checks.has_any_role(*allowed_roles)
@@ -228,10 +232,9 @@ async def update_players(interaction: discord.Interaction):
                 changes_summary += f"ID: {player_id}, Old Name: {old_name}, New Name: {new_name}\n"
 
         if invalid_players:
-            changes_summary += "Error in proccess or unkown ID (pending review):\n"
             for player_id, player_name in invalid_players:
                 await interaction.followup.send(f"ID: {player_id}, Name: {player_name}\nWhat do you want to do with this player?",
-                                                view=PlayerActionView(player_id, player_name, 'players.json'))
+                                                view=PlayerActionView(player_id, player_name, 'players.json'), ephemeral=True)
         
         if not updated_players and not invalid_players:
             changes_summary = "No changes detected."

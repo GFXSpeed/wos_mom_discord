@@ -1,89 +1,58 @@
 import discord
 import hashlib
 import json
-import requests
+import httpx
+import asyncio
 from datetime import datetime
-from requests.adapters import HTTPAdapter, Retry
-from .player_management import load_player_data, update_player_data
-from bot import bot, SELENIUM
+from bot import bot
+from .wos_api import get_playerdata, encode_data
+from .player_management import load_player_data
 
-wos_player_info_url = "https://wos-giftcode-api.centurygame.com/api/player"
-wos_giftcode_url = "https://wos-giftcode-api.centurygame.com/api/gift_code"
-wos_giftcode_redemption_url = "https://wos-giftcode.centurygame.com"
-wos_encrypt_key = "tB87#kPtkxqOS2"
-
-retry_config = Retry(
-    total=5,
-    backoff_factor=1,
-    status_forcelist=[429],
-    allowed_methods=["POST"]
-)
+WOS_PLAYER_INFO_URL = 'https://wos-giftcode-api.centurygame.com/api/player'
+WOS_REDEMPTION_URL = "https://wos-giftcode.centurygame.com"
+WOS_GIFTCODE_URL = 'https://wos-giftcode-api.centurygame.com/api/gift_code'
+WOS_ENCRYPT_KEY = "tB87#kPtkxqOS2"
 
 
-def get_session():
-    session = requests.Session()
-    session.mount("https://", HTTPAdapter(max_retries=retry_config))
+async def claim_giftcode(player_id, giftcode):
+    async with httpx.AsyncClient() as client:
+        playerdata = await get_playerdata(player_id, client)
+        
+        if playerdata is None:
+            return "ERROR"
 
-    headers = {
-        "accept": "application/json, text/plain, */*",
-        "content-type": "application/x-www-form-urlencoded",
-        "origin": wos_giftcode_redemption_url,
-    }
-    session.headers.update(headers)
-    return session
-
-def authenticate(player_id):
-    session = get_session()
-    data_to_encode = {
-        "fid": f"{player_id}",
-        "time": f"{int(datetime.now().timestamp())}",
-    }
-    data = encode_data(data_to_encode)
-    response_stove_info = session.post(
-        wos_player_info_url,
-        data=data,
-    )
-    return session, response_stove_info
-
-def encode_data(data):
-    sorted_keys = sorted(data.keys())
-    encoded_data = "&".join(
-        [
-            f"{key}={json.dumps(data[key]) if isinstance(data[key], dict) else data[key]}"
-            for key in sorted_keys
-        ]
-    )
-    sign = hashlib.md5(f"{encoded_data}{wos_encrypt_key}".encode()).hexdigest()
-    return {"sign": sign, **data}
-
-def claim_giftcode(player_id, giftcode):
-    session, response_stove_info = authenticate(player_id)
-    if response_stove_info.json().get("msg") == "success":
-        data_to_encode = {
-            "fid": f"{player_id}",
+        data = await encode_data({
+            "fid": player_id,
             "cdk": giftcode,
-            "time": f"{int(datetime.now().timestamp())}",
-        }
-        data = encode_data(data_to_encode)
-        response_giftcode = session.post(
-            wos_giftcode_url,
-            data=data,
-        )
-        response_json = response_giftcode.json()
-        print(f"Response for {player_id}: {response_json}")
-        if response_json.get("msg") == "SUCCESS":
-            return session, "SUCCESS"
-        elif response_json.get("msg") == "RECEIVED." and response_json.get("err_code") == 40008:
-            return session, "ALREADY_RECEIVED"
+            "time": str(int(datetime.now().timestamp()))
+        })
+        
+        response = await client.post(WOS_GIFTCODE_URL, data=data)
+
+        if response.status_code == 200:
+            response_data = response.json()
+            if response_data.get("msg") == "SUCCESS":
+                return "SUCCESS"
+            elif response_data.get("msg") == "RECEIVED." and response_data.get("err_code") == 40008:
+                return "ALREADY_RECEIVED"
+            elif response_data.get("msg") == "TIME ERROR." and response_data.get("err_code") == 40007:
+                return "EXPIRED"
+            elif response_data.get("msg") == "CDK NOT FOUND." and response_data.get("err_code") == 40014:
+                return "INVALID"
+            else:
+                return "ERROR"
         else:
-            return session, "ERROR"
-    else:
-        return session, 
+            print(f"Error: Received status code {response.status_code}")
+            return "ERROR"
+
 
 async def use_codes(ctx, code, player_ids=None):
-    success_results = []
-    received_results = []
-    failure_results = []
+    redeem_success = []
+    redeem_failed = []
+    code_invalid = False
+    code_expired = False
+    total_attempts = 0
+    max_attempts = 5
 
     if player_ids is None:
         player_data = await load_player_data('players.json')
@@ -91,43 +60,55 @@ async def use_codes(ctx, code, player_ids=None):
 
     playercount = len(player_ids)
     thread = await ctx.channel.create_thread(name=f'Code: {code}', auto_archive_duration=4320, type=discord.ChannelType.public_thread)
-    starting_info = f'Starting to redeem code **{code}** for {playercount} players. This could take up to {(12*playercount)/60} minutes'
+    starting_info = f'Starting to redeem code **{code}** for {playercount} players. This could take up to {(12 * playercount) / 60:.1f} minutes'
     await thread.send(starting_info)
 
-    for pid in player_ids:
-        try:
-            session, response_status = claim_giftcode(pid, code)
+    while player_ids and total_attempts < max_attempts:
+        total_attempts += 1
+        failed_ids = []
 
-            if response_status == "SUCCESS":
-                print(f'{pid} SUCCESS')
-                success_results.append(pid)
-            elif response_status == "ALREADY_RECEIVED":
-                received_results.append(pid)
-                print(f'{pid} ALREADY CLAIMED')
-            else:
-                failure_results.append(pid)
-                print(f'{pid} FAILED')
-        except Exception as e:
-            print(e)
-            failure_results.append(pid)
-    
-    redeem_success = len(success_results)
-    redeem_failed = len(failure_results)
-    await send_summary(thread, code, playercount, redeem_success, redeem_failed)
- 
+        for pid in player_ids:
+            try:
+                response_status = await claim_giftcode(pid, code)
+
+                if response_status == "SUCCESS":
+                    print(f'Try no {total_attempts}, {pid} SUCCESS')
+                    redeem_success.append(pid)
+                elif response_status == "ALREADY_RECEIVED":
+                    redeem_failed.append(pid)
+                    print(f'Try no {total_attempts}, {pid} ALREADY CLAIMED')
+                elif response_status == "EXPIRED":
+                    print(f'Code expired')
+                    code_expired = True
+                    break
+                elif response_status == "INVALID":
+                    print(f'Code invalid')
+                    code_invalid = True
+                    break
+                else:
+                    failed_ids.append(pid)
+                    print(f'Try no {total_attempts}, {pid} FAILED, adding to retry')
+            except Exception as e:
+                print(e)
+                failed_ids.append(pid)
+
+        if not failed_ids:
+            break
+        player_ids = failed_ids.copy()
+
+    await send_summary(thread, code, playercount, len(redeem_success), len(failed_ids), total_attempts, code_invalid, code_expired)
 
 
-async def send_summary(channel, code, playercount, redeem_success, redeem_failed):
+async def send_summary(channel, code, playercount, redeem_success, redeem_failed, total_attempts, code_invalid, code_expired):
     embed = discord.Embed(title=f"Stats for giftcode: {code}")
-    embed.add_field(name="Players in database: ", value=f"{playercount}", inline=False)
+    embed.add_field(name="Players in database", value=f"{playercount}", inline=False)
     embed.add_field(name="Successfully redeemed for", value=f"{redeem_success} players", inline=True)
     embed.add_field(name="Already used or failed for", value=f"{redeem_failed} players", inline=True)
-    #embed.set_footer(text=f"Redeemed in {total_attempts} tries. Updated {updated_player_count} names.")
-    #if code_invalid:
-    #    embed.set_footer(text="Code did not exist. Exited early.")
-    #elif code_expired:
-    #    embed.set_footer(text="Code expired. Exited early.")
-    #elif no_worker:
-    #    embed.set_footer(text="Can´t do this at the moment. Please try again later.")
+    footer_text = f"Redeemed in {total_attempts} tries."
+    if code_invalid:
+        footer_text = "Code did not exist. Exited early."
+    elif code_expired:
+        footer_text = "Code expired. Exited early."
+    embed.set_footer(text=footer_text)
     await channel.send(embed=embed)
     print("Done")
