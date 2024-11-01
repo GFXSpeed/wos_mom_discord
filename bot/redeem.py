@@ -1,205 +1,126 @@
-import time
-import random
-import asyncio
-import logging
 import discord
-import requests
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException
-from concurrent.futures import ThreadPoolExecutor
-from .custom_logging import log_redeem_attempt
+import httpx
+from datetime import datetime
+from bot import bot
+from .wos_api import get_playerdata, encode_data
 from .player_management import load_player_data, update_player_data
-from bot import bot, SELENIUM
+from .custom_logging import log_redeem_attempt, log_event
 
-SELENIUM_INSTANCES = SELENIUM + "/wd/hub"
-SELENIUM_STATUS = SELENIUM + "/status"
+WOS_GIFTCODE_URL = 'https://wos-giftcode-api.centurygame.com/api/gift_code'
 
-# Selenium settings
-op = Options()
-op.add_argument("--disable-gpu")
-op.add_argument("--ignore-ssl-errors=yes")
-op.add_argument("--ignore-certificate-errors")
-
-# get available selenium instances
-def get_available_slots():
-    selenium_status_url = SELENIUM + "/status"
-    try:
-        response = requests.get(selenium_status_url)
-        data = response.json()
-
-        free_slots = 0
-        for node in data['value']['nodes']:
-            max_sessions = node['maxSessions']
-            active_sessions = sum(1 for slot in node['slots'] if slot['session'] is not None)
-            free_slots += (max_sessions - active_sessions)
+async def claim_giftcode(player_id, giftcode):
+    async with httpx.AsyncClient() as client:
+        playerdata = await get_playerdata(player_id, client)
         
-        return free_slots
-    except Exception as e:
-        print(f"Error retrieving Selenium Hub status: {e}")
-        return 0
+        if playerdata is None:
+            return "ERROR"
 
+        data = await encode_data({
+            "fid": player_id,
+            "cdk": giftcode,
+            "time": str(int(datetime.now().timestamp()))
+        })
+        player_name = playerdata.get("nickname")
+        response = await client.post(WOS_GIFTCODE_URL, data=data)
 
-# Function to redeem code for 1 player id 
-def redeem_code_for_player(code, pid):
-    driver = webdriver.Remote(command_executor=SELENIUM_INSTANCES, options=op)
-    randomtime = random.uniform(1.0, 2.0)
-
-    result = "Unknown error"
-    player = "Unknown player"
-
-    try:
-        driver.get("https://wos-giftcode.centurygame.com/")
-        WebDriverWait(driver, 15).until(EC.visibility_of_element_located((By.XPATH, "//input[@placeholder='Player ID']")))
-        driver.find_element(By.XPATH, "//input[@placeholder='Player ID']").send_keys(pid)
-        logging.info(f'Used PlayerID: {pid}')
-        driver.find_element(By.XPATH, "//*[@id='app']/div/div/div[3]/div[2]/div[1]/div[1]/div[2]/span").click()
-        WebDriverWait(driver, 15).until(EC.visibility_of_element_located((By.XPATH, "//*[@id='app']/div/div/div[3]/div[2]/div[1]/img")))
-        player = driver.find_element(By.XPATH, "/html/body/div/div/div/div[3]/div[2]/div[1]/div[1]/p[1]").text
-        logging.info(f'PlayerID is: {player}')
-        time.sleep(randomtime)
-        driver.find_element(By.XPATH, "//input[@placeholder='Enter Gift Code']").send_keys(code)
-        logging.info(f'PID: {pid}, Player: {player}, Entered code')
-        time.sleep(randomtime)
-        driver.find_element(By.XPATH, "//*[@id='app']/div/div/div[3]/div[2]/div[3]").click()
-        result = WebDriverWait(driver, 15).until(EC.visibility_of_element_located((By.XPATH, "//*[@id='app']/div/div[2]/div[2]/p"))).text
-
-        logging.info(f'{player}s result {result}')
-    except NoSuchElementException:
-        result = "Element not found"
-    except Exception as e:
-        result = f'Error: {str(e)}'   
-    finally:
-        time.sleep(2)
-        driver.quit()
-    return result, player
-
-class RedeemStatus:
-    def __init__(self):
-        self.redeem_success = 0
-        self.redeem_failed = 0
-        self.code_invalid = False
-        self.code_expired = False
-        self.no_worker = False
-        self.retry_ids = []
-        self.update_player = {}
-
-#worker to redeem ids in multiple instances
-async def redeem_worker(queue, executor, loop, code, status):
-    while True:
-        pid = await queue.get()
-        if pid is None:
-            print('Worker received stop signal, terminating.')
-            queue.task_done()
-            break
-        result, player = await loop.run_in_executor(executor, redeem_code_for_player, code, pid)
-        try:
-            status.update_player[pid] = player
-            logging.info(f'Updating player: {player} with result: {result}')
-            if "not found" in result:
-                status.code_invalid = True
-            elif "Expired" in result:
-                status.code_expired = True
-            elif "Redeemed" in result:
-                status.redeem_success += 1
-            elif "Already claimed" in result:
-                status.redeem_failed += 1
+        if response.status_code == 200:
+            response_data = response.json()
+            if response_data.get("msg") == "SUCCESS":
+                return "SUCCESS", player_name
+            elif response_data.get("msg") == "RECEIVED." and response_data.get("err_code") == 40008:
+                return "ALREADY_RECEIVED", player_name
+            elif response_data.get("msg") == "TIME ERROR." and response_data.get("err_code") == 40007:
+                return "EXPIRED"
+            elif response_data.get("msg") == "CDK NOT FOUND." and response_data.get("err_code") == 40014:
+                return "INVALID"
             else:
-                status.redeem_failed += 1
-                status.retry_ids.append(pid)
-            if status.code_invalid or status.code_expired:
-                while not queue.empty():
-                    queue.get_nowait()
-                    queue.task_done()
-                break
-        except Exception as e:
-            await log_redeem_attempt(pid, player, code, e)
-            queue.task_done()
-            break
-        finally:
-            await log_redeem_attempt(pid, player, code, result)
-            queue.task_done()
+                return "ERROR", player_name
+        else:
+            print(f"Error: Received status code {response.status_code}")
+            return "ERROR", player_name
 
-# Function to start worker, update and summary
-async def use_codes(ctx, code, player_ids=None, retry_limit=4):
+
+async def use_codes(ctx, code, player_ids=None):
+    redeem_success = []
+    redeem_failed = []
+    code_invalid = False
+    code_expired = False
+    total_attempts = 0
+    max_attempts = 5
+
+    update_player = {}
+
     if player_ids is None:
         player_data = await load_player_data('players.json')
         player_ids = list(player_data.keys())
 
-    total_attempts = 1
-    max_attempts = retry_limit + 1
-    status = RedeemStatus()
     playercount = len(player_ids)
     thread = await ctx.channel.create_thread(name=f'Code: {code}', auto_archive_duration=4320, type=discord.ChannelType.public_thread)
-    starting_info = f'Starting to redeem code **{code}** for {playercount} players. This could take up to {(12*playercount)/60} minutes'
+    starting_info = f'Starting to redeem code **{code}** for {playercount} players. This could take up to {(12 * playercount) / 60:.1f} minutes'
     await thread.send(starting_info)
-    queue = asyncio.Queue()
 
-    while total_attempts <= max_attempts:
-        loop = asyncio.get_event_loop()
-        if not player_ids:
-            print('No players left to process.')
-            break
-        print(f"Adding {len(player_ids)} players to the queue for attempt {total_attempts}.")
+    while player_ids and total_attempts < max_attempts:
+        total_attempts += 1
+        failed_ids = []
 
         for pid in player_ids:
-            await queue.put(pid)
+            try:
+                response_status, player_name = await claim_giftcode(pid, code)
 
-        free_slots = get_available_slots()
-        workers = free_slots -2
-        print(f'Free slots: {free_slots}; Using {workers} workers')
+                if response_status == "SUCCESS":
+                    print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: SUCCESS')
+                    await log_redeem_attempt(pid, player_name, code, "SUCCESS")
+                    redeem_success.append(pid)
+                    update_player[pid] = player_name
+                elif response_status == "ALREADY_RECEIVED":
+                    print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: ALREADY CLAIMED')
+                    redeem_failed.append(pid)
+                    update_player[pid] = player_name
+                elif response_status == "EXPIRED":
+                    print(f'Code expired')
+                    await log_redeem_attempt(pid, player_name, code, "EXPIRED")
+                    code_expired = True
+                    break
+                elif response_status == "INVALID":
+                    print(f'Code invalid')
+                    await log_redeem_attempt(pid, player_name, code, "INVALID")
+                    code_invalid = True
+                    break
+                else:
+                    failed_ids.append(pid)
+                    print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: FAILED, adding to retry')
+                    await log_redeem_attempt(pid, player_name, code, "ERROR")
+            except Exception as e:
+                print(e)
+                failed_ids.append(pid)
 
-        if workers >= 1:
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                tasks = [asyncio.create_task(redeem_worker(queue, executor, loop, code, status)) for _ in range(workers)]
-                print(f'Worker task created, waiting for queue to be processed')
-                await queue.join()
-                for _ in range(workers):
-                    await queue.put(None)
-                print("Waiting for all worker tasks to complete")
-                await asyncio.gather(*tasks)
-            if status.retry_ids and total_attempts < max_attempts:
-                print(f'Starting next try with {len(status.retry_ids)} players. It´s the {total_attempts} try')
-                player_ids = status.retry_ids.copy()
-                print(f'playerids: {player_ids}')
-                status.retry_ids.clear()
-                print(f'retry ids: {status.retry_ids}')
-            else:
-                print(f'No player left or max attempts reached after {total_attempts} tries')
-                break
-            total_attempts += 1
-        else:
-            print("No free selenium instance")
-            status.no_worker = True
+        if not failed_ids:
             break
-
-    print(f'Summary for code: {code}, success: {status.redeem_success}, failed: {status.redeem_failed}, attempts: {total_attempts}')
-    print(f'Updating players')
+        player_ids = failed_ids.copy()
+    
     try:
-        print(f'Input: {status.update_player}')
-        updated_players, _ = await update_player_data(player_data=status.update_player)
+        print("Redeem finished, updating names")
+        updated_players, _ = await update_player_data(player_data=update_player)
         updated_player_count = len(updated_players)
     except Exception as e:
-        print(f'Error while updating players: {e}')
+        print("Error while updating players: {e}")
+        await log_event(event="UPDATING_NAMES", error=e)
         return
     finally:
-        print("Sending summary")
-        await send_summary(thread, code, playercount, status.redeem_success, status.redeem_failed, status.code_invalid, status.code_expired, status.no_worker, total_attempts, updated_player_count)
+        print("Updated names. Sending summary")
+        await send_summary(thread, code, playercount, len(redeem_success), len(redeem_failed), total_attempts, code_invalid, code_expired, updated_player_count)
 
-async def send_summary(channel, code, playercount, redeem_success, redeem_failed, code_invalid, code_expired, no_worker, total_attempts, updated_player_count):
+
+async def send_summary(channel, code, playercount, redeem_success, redeem_failed, total_attempts, code_invalid, code_expired, updated_player_count):
     embed = discord.Embed(title=f"Stats for giftcode: {code}")
-    embed.add_field(name="Players in database: ", value=f"{playercount}", inline=False)
+    embed.add_field(name="Players in database", value=f"{playercount}", inline=False)
     embed.add_field(name="Successfully redeemed for", value=f"{redeem_success} players", inline=True)
     embed.add_field(name="Already used or failed for", value=f"{redeem_failed} players", inline=True)
-    embed.set_footer(text=f"Redeemed in {total_attempts} tries. Updated {updated_player_count} names.")
+    footer_text = f"Redeemed in {total_attempts} tries. Updated {updated_player_count} names."
     if code_invalid:
-        embed.set_footer(text="Code did not exist. Exited early.")
+        footer_text = "Code did not exist. Exited early."
     elif code_expired:
-        embed.set_footer(text="Code expired. Exited early.")
-    elif no_worker:
-        embed.set_footer(text="Can´t do this at the moment. Please try again later.")
+        footer_text = "Code expired. Exited early."
+    embed.set_footer(text=footer_text)
     await channel.send(embed=embed)
     print("Done")
