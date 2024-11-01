@@ -1,18 +1,12 @@
 import discord
-import hashlib
-import json
 import httpx
-import asyncio
 from datetime import datetime
 from bot import bot
 from .wos_api import get_playerdata, encode_data
-from .player_management import load_player_data
+from .player_management import load_player_data, update_player_data
+from .custom_logging import log_redeem_attempt, log_event
 
-WOS_PLAYER_INFO_URL = 'https://wos-giftcode-api.centurygame.com/api/player'
-WOS_REDEMPTION_URL = "https://wos-giftcode.centurygame.com"
 WOS_GIFTCODE_URL = 'https://wos-giftcode-api.centurygame.com/api/gift_code'
-WOS_ENCRYPT_KEY = "tB87#kPtkxqOS2"
-
 
 async def claim_giftcode(player_id, giftcode):
     async with httpx.AsyncClient() as client:
@@ -26,24 +20,24 @@ async def claim_giftcode(player_id, giftcode):
             "cdk": giftcode,
             "time": str(int(datetime.now().timestamp()))
         })
-        
+        player_name = playerdata.get("nickname")
         response = await client.post(WOS_GIFTCODE_URL, data=data)
 
         if response.status_code == 200:
             response_data = response.json()
             if response_data.get("msg") == "SUCCESS":
-                return "SUCCESS"
+                return "SUCCESS", player_name
             elif response_data.get("msg") == "RECEIVED." and response_data.get("err_code") == 40008:
-                return "ALREADY_RECEIVED"
+                return "ALREADY_RECEIVED", player_name
             elif response_data.get("msg") == "TIME ERROR." and response_data.get("err_code") == 40007:
                 return "EXPIRED"
             elif response_data.get("msg") == "CDK NOT FOUND." and response_data.get("err_code") == 40014:
                 return "INVALID"
             else:
-                return "ERROR"
+                return "ERROR", player_name
         else:
             print(f"Error: Received status code {response.status_code}")
-            return "ERROR"
+            return "ERROR", player_name
 
 
 async def use_codes(ctx, code, player_ids=None):
@@ -53,6 +47,8 @@ async def use_codes(ctx, code, player_ids=None):
     code_expired = False
     total_attempts = 0
     max_attempts = 5
+
+    update_player = {}
 
     if player_ids is None:
         player_data = await load_player_data('players.json')
@@ -69,25 +65,31 @@ async def use_codes(ctx, code, player_ids=None):
 
         for pid in player_ids:
             try:
-                response_status = await claim_giftcode(pid, code)
+                response_status, player_name = await claim_giftcode(pid, code)
 
                 if response_status == "SUCCESS":
-                    print(f'Try no {total_attempts}, {pid} SUCCESS')
+                    print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: SUCCESS')
+                    await log_redeem_attempt(pid, player_name, code, "SUCCESS")
                     redeem_success.append(pid)
+                    update_player[pid] = player_name
                 elif response_status == "ALREADY_RECEIVED":
+                    print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: ALREADY CLAIMED')
                     redeem_failed.append(pid)
-                    print(f'Try no {total_attempts}, {pid} ALREADY CLAIMED')
+                    update_player[pid] = player_name
                 elif response_status == "EXPIRED":
                     print(f'Code expired')
+                    await log_redeem_attempt(pid, player_name, code, "EXPIRED")
                     code_expired = True
                     break
                 elif response_status == "INVALID":
                     print(f'Code invalid')
+                    await log_redeem_attempt(pid, player_name, code, "INVALID")
                     code_invalid = True
                     break
                 else:
                     failed_ids.append(pid)
-                    print(f'Try no {total_attempts}, {pid} FAILED, adding to retry')
+                    print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: FAILED, adding to retry')
+                    await log_redeem_attempt(pid, player_name, code, "ERROR")
             except Exception as e:
                 print(e)
                 failed_ids.append(pid)
@@ -95,16 +97,26 @@ async def use_codes(ctx, code, player_ids=None):
         if not failed_ids:
             break
         player_ids = failed_ids.copy()
+    
+    try:
+        print("Redeem finished, updating names")
+        updated_players, _ = await update_player_data(player_data=update_player)
+        updated_player_count = len(updated_players)
+    except Exception as e:
+        print("Error while updating players: {e}")
+        await log_event(event="UPDATING_NAMES", error=e)
+        return
+    finally:
+        print("Updated names. Sending summary")
+        await send_summary(thread, code, playercount, len(redeem_success), len(redeem_failed), total_attempts, code_invalid, code_expired, updated_player_count)
 
-    await send_summary(thread, code, playercount, len(redeem_success), len(failed_ids), total_attempts, code_invalid, code_expired)
 
-
-async def send_summary(channel, code, playercount, redeem_success, redeem_failed, total_attempts, code_invalid, code_expired):
+async def send_summary(channel, code, playercount, redeem_success, redeem_failed, total_attempts, code_invalid, code_expired, updated_player_count):
     embed = discord.Embed(title=f"Stats for giftcode: {code}")
     embed.add_field(name="Players in database", value=f"{playercount}", inline=False)
     embed.add_field(name="Successfully redeemed for", value=f"{redeem_success} players", inline=True)
     embed.add_field(name="Already used or failed for", value=f"{redeem_failed} players", inline=True)
-    footer_text = f"Redeemed in {total_attempts} tries."
+    footer_text = f"Redeemed in {total_attempts} tries. Updated {updated_player_count} names."
     if code_invalid:
         footer_text = "Code did not exist. Exited early."
     elif code_expired:

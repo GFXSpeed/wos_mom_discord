@@ -4,8 +4,8 @@ import discord
 import httpx
 from discord import app_commands
 from discord.ext import commands
+from bot import bot, allowed_roles
 from .wos_api import get_playerdata
-from bot import bot, allowed_roles, SELENIUM
 from .custom_logging import log_commands, log_event
 from .ui import PlayerActionView
 
@@ -41,6 +41,7 @@ async def get_player_choices(interaction: discord.Interaction, current: str):
 @bot.tree.command(name="add_id", description="Adds a player ID. Usage: /add_id <player_id>")
 async def add_id(interaction: discord.Interaction, player_id: str):
     await interaction.response.defer()
+    await log_commands(interaction, player_id=player_id)
     player_data = await load_player_data('players.json')
 
     try:
@@ -66,14 +67,15 @@ async def add_id(interaction: discord.Interaction, player_id: str):
             else:
                 await interaction.followup.send(f'Player ID {player_id} is not valid.')
     except Exception as e:
-        await interaction.followup.send(f'Something went wrong: {e}')
+        await interaction.followup.send(f'Something went wrong. Please try again later')
+        await log_commands(e)
 
 
 
 @bot.tree.command(name="remove_id", description="Removes player IDs. R4+ only. Usage: /remove_id <player_id, player_id>")
 @app_commands.checks.has_any_role(*allowed_roles)
 async def remove_id(interaction: discord.Interaction, player_ids: str):
-    await log_commands(interaction)
+    await log_commands(interaction, player_id=player_ids)
     player_ids = [pid.strip() for pid in player_ids.split(",")]
 
     player_data = await load_player_data('players.json')
@@ -95,7 +97,7 @@ async def remove_id(interaction: discord.Interaction, player_ids: str):
     non_existent_msg = ""
 
     if removed_players:
-        removed_msg = "\n".join([f"Player ID {player_id} with name {player_name} removed." for player_id, player_name in removed_players])
+        removed_msg = "\n".join([f"ID {player_id}, name: {player_name}" for player_id, player_name in removed_players])
     
     if non_existent_ids:
         non_existent_msg = ", ".join(non_existent_ids)
@@ -157,6 +159,7 @@ async def list_ids(interaction: discord.Interaction):
 @bot.tree.command(name="details", description="Shows details of a player. Usage: /details <player_id>")
 @app_commands.autocomplete(player_id=get_player_choices)
 async def details(interaction: discord.Interaction, player_id: str):
+    await log_commands(interaction)
     await interaction.response.defer()
     
     async with httpx.AsyncClient() as client:
@@ -179,42 +182,65 @@ async def details(interaction: discord.Interaction, player_id: str):
 
     await interaction.followup.send(embed=embed)
 
-
-async def update_player_data(player_data=None):
-    removed_players = []
+async def update_player_data(player_id=None, player_name=None, player_data=None):
     updated_players = []
-    
-    if player_data is None:
-        try: 
-            player_data = await load_player_data('players.json')
-        except FileNotFoundError:
-            return [], [] 
-
+    pending_players = []
     updated_data = {}
 
-    async with httpx.AsyncClient() as client:
-        for player_id, old_name in player_data.items():
-            try:
-                api_data = await get_playerdata(player_id, client)
-                if api_data:
-                    new_name = api_data.get("nickname")
-                    
-                    if new_name and new_name != old_name:
-                        updated_players.append((player_id, old_name, new_name))
-                        updated_data[player_id] = new_name
-                        await log_event('Player Name Updated', player_id=player_id, old_name=old_name, new_name=new_name)
+    if player_data is None:
+        try:
+            player_data = await load_player_data('players.json')
+        except FileNotFoundError:
+            return [], []
+
+        async with httpx.AsyncClient() as client:
+            for player_id, old_name in player_data.items():
+                try:
+                    api_data = await get_playerdata(player_id, client)
+                    if api_data:
+                        new_name = api_data.get("nickname")
+                        
+                        if new_name and new_name != old_name:
+                            updated_players.append((player_id, old_name, new_name))
+                            updated_data[player_id] = new_name
+                            await log_event('Player Name Updated', player_id=player_id, old_name=old_name, new_name=new_name)
+                        else:
+                            updated_data[player_id] = old_name
                     else:
+                        pending_players.append((player_id, old_name))
                         updated_data[player_id] = old_name
+                        await log_event("Adding to pending players:", player_id=player_id)
+                except Exception as e:
+                    print(f"Error processing player ID {player_id}: {e}")
+                    await log_event('Update Player Error', player_id=player_id, error=str(e))
+                    continue
+    else:
+        try:
+            old_data = await load_player_data('players.json')
+        except FileNotFoundError:
+            print("Error: players.json not found.")
+            return [], []
+        
+        for player_id, new_name in player_data.items():
+            old_name = old_data.get(player_id, None)
+            try:
+                if new_name and new_name != old_name:
+                    updated_players.append((player_id, old_name, new_name))
+                    updated_data[player_id] = new_name
+                    await log_event('Player Name Updated', player_id=player_id, old_name=old_name, new_name=new_name)
+                    print(f"Player {player_id} updated: {old_name} -> {new_name}")
                 else:
-                    removed_players.append((player_id, old_name))
-                    await log_event('Added to remove prompt:', player_id=player_id)
+                    updated_data[player_id] = old_name
             except Exception as e:
                 print(f"Error processing player ID {player_id}: {e}")
                 await log_event('Update Player Error', player_id=player_id, error=str(e))
                 continue
 
     await save_player_data('players.json', updated_data)
-    return updated_players, removed_players
+    print(f'Updated players: {updated_players}\nPending players:{pending_players}')
+    return updated_players, pending_players
+
+
 
 @bot.tree.command(name="update_player", description="Updates all player data to ensure validity.")
 @app_commands.checks.has_any_role(*allowed_roles)
@@ -222,7 +248,6 @@ async def update_players(interaction: discord.Interaction):
     await log_commands(interaction)
     try:
         await interaction.response.send_message("Updating players. This could take a while...", ephemeral=True)
-
         updated_players, invalid_players = await update_player_data()
         changes_summary = "Player data update completed.\n"
 
@@ -230,17 +255,21 @@ async def update_players(interaction: discord.Interaction):
             changes_summary += "Updated players:\n"
             for player_id, old_name, new_name in updated_players:
                 changes_summary += f"ID: {player_id}, Old Name: {old_name}, New Name: {new_name}\n"
-
-        if invalid_players:
-            for player_id, player_name in invalid_players:
-                await interaction.followup.send(f"ID: {player_id}, Name: {player_name}\nWhat do you want to do with this player?",
-                                                view=PlayerActionView(player_id, player_name, 'players.json'), ephemeral=True)
-        
+                
+        for player_id, player_name in invalid_players:
+            view = PlayerActionView(player_id, player_name, 'players.json')
+            message = await interaction.followup.send(
+                f"ID: {player_id}, Name: {player_name}\nError on getting Playerdata. Player may not exist. What do you want to do?",
+                view=view,
+                ephemeral=False
+            )
+            
+            await view.wait()
+            
         if not updated_players and not invalid_players:
             changes_summary = "No changes detected."
-
         await interaction.followup.send(changes_summary)
-
+        
     except Exception as e:
         await interaction.followup.send(f'Something went wrong while updating player data', ephemeral=True)
         await log_commands(e)

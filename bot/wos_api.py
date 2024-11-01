@@ -5,6 +5,8 @@ import asyncio
 from datetime import datetime
 
 WOS_PLAYER_INFO_URL = 'https://wos-giftcode-api.centurygame.com/api/player'
+WOS_REDEMPTION_URL = "https://wos-giftcode.centurygame.com"
+WOS_GIFTCODE_URL = 'https://wos-giftcode-api.centurygame.com/api/gift_code'
 WOS_ENCRYPT_KEY = "tB87#kPtkxqOS2"
 
 async def encode_data(data):
@@ -15,7 +17,7 @@ async def encode_data(data):
     sign = hashlib.md5(f"{encoded_data}{WOS_ENCRYPT_KEY}".encode()).hexdigest()
     return {"sign": sign, **data}
 
-async def get_playerdata(player_id, client, max_retries=5, initial_wait=1):
+async def get_playerdata(player_id, client, max_retries=3, initial_wait=12):
     headers = {
         "accept": "application/json, text/plain, */*",
         "content-type": "application/x-www-form-urlencoded",
@@ -49,7 +51,7 @@ async def get_playerdata(player_id, client, max_retries=5, initial_wait=1):
                 return None
         except httpx.HTTPStatusError as e:
             if response.status_code == 429:
-                # Increase waittime 
+                # Increase waittime exponentially
                 wait_time = initial_wait * (2 ** (attempt - 1))
                 print(f"Rate limit exceeded for player ID {player_id}. Retrying in {wait_time} seconds...")
                 await asyncio.sleep(wait_time)

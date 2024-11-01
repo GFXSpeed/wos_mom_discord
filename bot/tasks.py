@@ -1,5 +1,3 @@
-import discord
-import asyncio
 from .custom_logging import log_event
 from discord.ext import tasks
 from datetime import datetime, timedelta, timezone
