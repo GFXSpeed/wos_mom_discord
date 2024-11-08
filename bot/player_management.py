@@ -155,7 +155,19 @@ async def list_ids(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("There are no player IDs in the database.")
 
+async def format_furnance_level(level):
+    if level <= 30:
+        return f"Furnance-Level {level}"
+    elif 31 <= level <= 34:
+        sub_level = level - 30
+        return f"30-{sub_level}"
+    else:
+        # FC starting at lvl 35
+        fc_level = (level - 35) // 5 + 1  # Main-FC-Level
+        sub_level = (level - 35) % 5      # Sub-Levels
+        return f"FC {fc_level}" if sub_level == 0 else f"FC {fc_level}-{sub_level}"
 
+        
 @bot.tree.command(name="details", description="Shows details of a player. Usage: /details <player_id>")
 @app_commands.autocomplete(player_id=get_player_choices)
 async def details(interaction: discord.Interaction, player_id: str):
@@ -172,12 +184,15 @@ async def details(interaction: discord.Interaction, player_id: str):
     nickname = player_data.get("nickname", "Unknown")
     avatar_image = player_data.get("avatar_image")
     stove_lv_content = player_data.get("stove_lv_content")
-    stove_lv = player_data.get("stove_lv", "Unknown")
+    stove_lv = player_data.get("stove_lv", "0")
+    formatted_stove_lv = await format_furnance_level(stove_lv)
+    state = player_data.get("kid")
 
     embed = discord.Embed(title="", color=discord.Color.blue())
     embed.set_author(name=nickname, icon_url=stove_lv_content) 
     embed.add_field(name="Player-ID", value=player_id, inline=False)
-    embed.add_field(name="Furnance-Level", value=stove_lv)
+    embed.add_field(name="Furnance-Level", value=formatted_stove_lv)
+    embed.add_field(name="State", value = state)
     embed.set_thumbnail(url=avatar_image)
 
     await interaction.followup.send(embed=embed)
@@ -199,6 +214,13 @@ async def update_player_data(player_id=None, player_name=None, player_data=None)
                     api_data = await get_playerdata(player_id, client)
                     if api_data:
                         new_name = api_data.get("nickname")
+                        state = api_data.get("kid") 
+
+                        if state != 543:
+                            pending_players.append((player_id, old_name))
+                            await log_event("Player outside region 543", player_id=player_id, region=state)
+                            print(f"Player {player_id} is outside region 543 (region {state})")
+                            continue
                         
                         if new_name and new_name != old_name:
                             updated_players.append((player_id, old_name, new_name))
@@ -248,7 +270,7 @@ async def update_players(interaction: discord.Interaction):
     await log_commands(interaction)
     try:
         await interaction.response.send_message("Updating players. This could take a while...", ephemeral=True)
-        updated_players, invalid_players = await update_player_data()
+        updated_players, pending_players = await update_player_data()
         changes_summary = "Player data update completed.\n"
 
         if updated_players:
@@ -256,17 +278,17 @@ async def update_players(interaction: discord.Interaction):
             for player_id, old_name, new_name in updated_players:
                 changes_summary += f"ID: {player_id}, Old Name: {old_name}, New Name: {new_name}\n"
                 
-        for player_id, player_name in invalid_players:
+        for player_id, player_name in pending_players:
             view = PlayerActionView(player_id, player_name, 'players.json')
             message = await interaction.followup.send(
-                f"ID: {player_id}, Name: {player_name}\nError on getting Playerdata. Player may not exist. What do you want to do?",
+                f"ID: {player_id}, Name: {player_name}\nPlayer may not exist or is in another state. What do you want to do?",
                 view=view,
                 ephemeral=False
             )
             
             await view.wait()
             
-        if not updated_players and not invalid_players:
+        if not updated_players and not pending_players:
             changes_summary = "No changes detected."
         await interaction.followup.send(changes_summary)
         
