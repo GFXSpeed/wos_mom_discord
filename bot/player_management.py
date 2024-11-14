@@ -7,7 +7,7 @@ from discord.ext import commands
 from bot import bot, allowed_roles
 from .wos_api import get_playerdata
 from .custom_logging import log_commands, log_event
-from .ui import PlayerActionView
+from .ui import PlayerActionView, PlayerDetailsView
 
 #################### HELPER FUNCTIONS ####################
 async def format_furnance_level(level):
@@ -307,18 +307,39 @@ async def details(interaction: discord.Interaction, player_id: str):
     nickname = player_data.get("nickname", "Unknown")
     avatar_image = player_data.get("avatar_image")
     stove_lv_content = player_data.get("stove_lv_content")
-    stove_lv = player_data.get("stove_lv", "0")
+    stove_lv = int(player_data.get("stove_lv", 0))
     formatted_stove_lv = await format_furnance_level(stove_lv)
     state = player_data.get("kid")
 
+    # Prüfen, ob der Spieler bereits in der Datenbank existiert
+    conn = sqlite3.connect('players.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT redeem FROM players WHERE player_id = ?", (player_id,))
+    result = cursor.fetchone()
+    player_exists = result is not None
+    redeem_status = result[0] if result else None
+    conn.close()
+
+    # Embed erstellen
     embed = discord.Embed(title="", color=discord.Color.blue())
     embed.set_author(name=nickname, icon_url=stove_lv_content) 
     embed.add_field(name="Player-ID", value=player_id, inline=False)
     embed.add_field(name="Furnance-Level", value=formatted_stove_lv)
-    embed.add_field(name="State", value = state)
+    embed.add_field(name="State", value=state)
     embed.set_thumbnail(url=avatar_image)
 
-    await interaction.followup.send(embed=embed)
+    # Status hinzufügen, ob der Spieler bereits in der Datenbank ist
+    if player_exists:
+        status_text = "This player is already in the database."
+        status_text += " (Watchlist)" if redeem_status == 0 else " (Active)"
+    else:
+        status_text = "This player is not in the database."
+
+    embed.add_field(name="Status", value=status_text, inline=False)
+
+    # Button-View erstellen und Buttons entsprechend dem Status anpassen
+    view = PlayerDetailsView(player_id, nickname, state, stove_lv, player_exists)
+    await interaction.followup.send(embed=embed, view=view)
 
 async def update_player_data(player_id=None, player_name=None, player_data=None):
     updated_players = []
