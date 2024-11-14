@@ -26,7 +26,7 @@ async def get_player_choices(interaction: discord.Interaction, current: str):
     conn = sqlite3.connect('players.db')
     cursor = conn.cursor()
 
-    # SQL-Abfrage mit Filter auf Name und Player-ID
+    #get data of DB
     cursor.execute("""
         SELECT player_id, name FROM players
         WHERE name LIKE ? OR player_id LIKE ?
@@ -36,13 +36,14 @@ async def get_player_choices(interaction: discord.Interaction, current: str):
     results = cursor.fetchall()
     conn.close()
 
-    # Erstellen der Auswahlmöglichkeiten für die Autocomplete-Optionen
+    # Create choices for autocomplete 
     choices = [
         app_commands.Choice(name=f"{name} (ID: {player_id})", value=str(player_id))
         for player_id, name in results
     ]
     return choices
 
+# Helper to update names during update process
 async def update_player_in_db(player_id, name, state, furnance_level):
     conn = sqlite3.connect('players.db')
     cursor = conn.cursor()
@@ -50,7 +51,7 @@ async def update_player_in_db(player_id, name, state, furnance_level):
     conn.commit()
     conn.close()
 
-# Helferfunktion zum Abrufen des aktuellen Spielernamens aus der Datenbank
+# Helper to get current name
 async def get_name_from_db(player_id):
     conn = sqlite3.connect('players.db')
     cursor = conn.cursor()
@@ -94,7 +95,7 @@ async def add_id(interaction: discord.Interaction, player_id: str):
                     player_name,
                     playerdata.get("kid", 543),
                     playerdata.get("stove_lv", 1),
-                    True  # Standardwert für redeem
+                    True  # True = Redeem, False = Only Watchlist
                 ))
                 conn.commit()
 
@@ -144,7 +145,7 @@ async def add_id(interaction: discord.Interaction, player_id: str):
                     player_name,
                     playerdata.get("kid", 543),
                     playerdata.get("stove_lv", 1),
-                    False  # Standardwert für redeem
+                    True  # True = Redeem, False = Only Watchlist
                 ))
                 conn.commit()
 
@@ -311,7 +312,7 @@ async def details(interaction: discord.Interaction, player_id: str):
     formatted_stove_lv = await format_furnance_level(stove_lv)
     state = player_data.get("kid")
 
-    # Prüfen, ob der Spieler bereits in der Datenbank existiert
+    # Check if player is already in db
     conn = sqlite3.connect('players.db')
     cursor = conn.cursor()
     cursor.execute("SELECT redeem FROM players WHERE player_id = ?", (player_id,))
@@ -320,7 +321,6 @@ async def details(interaction: discord.Interaction, player_id: str):
     redeem_status = result[0] if result else None
     conn.close()
 
-    # Embed erstellen
     embed = discord.Embed(title="", color=discord.Color.blue())
     embed.set_author(name=nickname, icon_url=stove_lv_content) 
     embed.add_field(name="Player-ID", value=player_id, inline=False)
@@ -328,7 +328,6 @@ async def details(interaction: discord.Interaction, player_id: str):
     embed.add_field(name="State", value=state)
     embed.set_thumbnail(url=avatar_image)
 
-    # Status hinzufügen, ob der Spieler bereits in der Datenbank ist
     if player_exists:
         status_text = "This player is already in the database."
         status_text += " (Watchlist)" if redeem_status == 0 else " (Active)"
@@ -337,7 +336,6 @@ async def details(interaction: discord.Interaction, player_id: str):
 
     embed.add_field(name="Status", value=status_text, inline=False)
 
-    # Button-View erstellen und Buttons entsprechend dem Status anpassen
     view = PlayerDetailsView(player_id, nickname, state, stove_lv, player_exists)
     await interaction.followup.send(embed=embed, view=view)
 
@@ -349,7 +347,6 @@ async def update_player_data(player_id=None, player_name=None, player_data=None)
         conn = sqlite3.connect('players.db')
         cursor = conn.cursor()
 
-        # Spieler-Daten aus der Datenbank laden
         cursor.execute("SELECT player_id, name, state, furnance_level FROM players")
         player_data = {str(row[0]): {"name": row[1], "state": row[2], "furnance_level": row[3]} for row in cursor.fetchall()}
         conn.close()
@@ -367,14 +364,14 @@ async def update_player_data(player_id=None, player_name=None, player_data=None)
                         new_state = api_data.get("kid")
                         new_furnance_level = api_data.get("stove_lv")
 
-                        # Spieler in einem anderen state/Region
+                        # Player in another state
                         if new_state != 543:
                             pending_players.append((player_id, old_name))
                             await log_event("Player outside state 543", player_id=player_id, player_name=new_name, state=new_state)
                             print(f"Player {player_id} is outside region 543 (region {new_state})")
                             continue
 
-                        # Änderungen erfassen und in Datenbank speichern, falls sich etwas geändert hat
+                        # Apply changes
                         if new_name != old_name or new_state != old_state or new_furnance_level != old_furnance_level:
                             updated_players.append({
                                 "player_id": player_id,

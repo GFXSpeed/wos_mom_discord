@@ -49,7 +49,7 @@ class PlayerDetailsView(discord.ui.View):
         self.state = state
         self.stove_lv = stove_lv
 
-        # Buttons deaktivieren, falls der Spieler bereits existiert
+        # Disable buttons if player already exists
         if player_exists:
             self.add_to_database_button.disabled = True
             self.add_to_watchlist_button.disabled = True
@@ -60,7 +60,7 @@ class PlayerDetailsView(discord.ui.View):
         conn = sqlite3.connect('players.db')
         cursor = conn.cursor()
 
-        # Hinzufügen des Spielers zur Datenbank mit dem angegebenen `redeem`-Status
+        # Add with redeem-Value
         cursor.execute('''
             INSERT OR REPLACE INTO players (player_id, name, state, furnance_level, redeem)
             VALUES (?, ?, ?, ?, ?)
@@ -69,6 +69,7 @@ class PlayerDetailsView(discord.ui.View):
         conn.commit()
         conn.close()
 
+        # Add without redeem-Value
         status = "Watchlist" if not redeem else "Database"
         await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) has been added to the {status}.", ephemeral=True)
         await self.disable_buttons(interaction)
@@ -93,8 +94,8 @@ class PlayerDetailsView(discord.ui.View):
         await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) has been removed from the database.", ephemeral=True)
         await self.disable_buttons(interaction)
 
+    # Helper to disable all buttons after use
     async def disable_buttons(self, interaction: discord.Interaction):
-        # Alle Buttons nach Klick deaktivieren
         for item in self.children:
             item.disabled = True
         await interaction.message.edit(view=self)
