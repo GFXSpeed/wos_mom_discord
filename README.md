@@ -37,8 +37,8 @@ Logs of Bot, used commands, events and redeem-events can be found in ./logs Fold
 ## Preview
 ![Commands Preview](https://github.com/user-attachments/assets/61655145-b5e0-4cb6-9eab-a245a57ac84b)
 ![Redeem Preview](https://github.com/user-attachments/assets/70c70e58-e241-4813-b7c7-f984a9776f10)
-![Various Commands Preview](https://github.com/user-attachments/assets/2d65336b-3429-42be-b96b-84c3c8338f43)
-
+![Various Commands Preview](https://github.com/user-attachments/assets/ccc4ad80-18cc-4c95-b297-bc07c0573edd)
+![Update News Preview](https://github.com/user-attachments/assets/5a3263bd-919e-40e0-ab72-13ecd3d1d0cc)
 
 ## Contact
 Feel free to reach out if you find bugs or have ideas for new features. Find me on discord: `gfxspeed` 
