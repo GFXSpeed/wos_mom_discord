@@ -4,8 +4,7 @@ import sqlite3
 from datetime import datetime
 from bot import bot
 from .wos_api import get_playerdata, encode_data
-from .player_management import update_player_data
-from .custom_logging import log_redeem_attempt, log_event
+from .custom_logging import log_redeem_attempt
 
 WOS_GIFTCODE_URL = 'https://wos-giftcode-api.centurygame.com/api/gift_code'
 
@@ -49,7 +48,6 @@ async def use_codes(ctx, code, player_ids=None):
     total_attempts = 0
     max_attempts = 5
 
-    # Spieler-IDs aus der SQLite-Datenbank laden, falls keine spezifischen IDs übergeben wurden
     if player_ids is None:
         conn = sqlite3.connect('players.db')
         cursor = conn.cursor()
@@ -99,7 +97,6 @@ async def use_codes(ctx, code, player_ids=None):
             break
         player_ids = failed_ids.copy()
     
-
     await send_summary(thread, code, playercount, len(redeem_success), len(redeem_failed), total_attempts, code_invalid, code_expired)
 
 

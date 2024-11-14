@@ -1,4 +1,3 @@
-import asyncio
 import discord
 from .custom_logging import log_event
 from discord.ext import tasks
