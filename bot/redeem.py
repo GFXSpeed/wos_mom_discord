@@ -1,9 +1,10 @@
 import discord
 import httpx
+import sqlite3
 from datetime import datetime
 from bot import bot
 from .wos_api import get_playerdata, encode_data
-from .player_management import load_player_data, update_player_data
+from .player_management import update_player_data
 from .custom_logging import log_redeem_attempt, log_event
 
 WOS_GIFTCODE_URL = 'https://wos-giftcode-api.centurygame.com/api/gift_code'
@@ -13,7 +14,7 @@ async def claim_giftcode(player_id, giftcode):
         playerdata = await get_playerdata(player_id, client)
         
         if playerdata is None:
-            return "ERROR"
+            return "ERROR", None
 
         data = await encode_data({
             "fid": player_id,
@@ -30,9 +31,9 @@ async def claim_giftcode(player_id, giftcode):
             elif response_data.get("msg") == "RECEIVED." and response_data.get("err_code") == 40008:
                 return "ALREADY_RECEIVED", player_name
             elif response_data.get("msg") == "TIME ERROR." and response_data.get("err_code") == 40007:
-                return "EXPIRED"
+                return "EXPIRED", player_name
             elif response_data.get("msg") == "CDK NOT FOUND." and response_data.get("err_code") == 40014:
-                return "INVALID"
+                return "INVALID", player_name
             else:
                 return "ERROR", player_name
         else:
@@ -48,11 +49,13 @@ async def use_codes(ctx, code, player_ids=None):
     total_attempts = 0
     max_attempts = 5
 
-    update_player = {}
-
+    # Spieler-IDs aus der SQLite-Datenbank laden, falls keine spezifischen IDs übergeben wurden
     if player_ids is None:
-        player_data = await load_player_data('players.json')
-        player_ids = list(player_data.keys())
+        conn = sqlite3.connect('players.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT player_id FROM players WHERE redeem IS TRUE")
+        player_ids = [str(row[0]) for row in cursor.fetchall()]
+        conn.close()
 
     playercount = len(player_ids)
     thread = await ctx.channel.create_thread(name=f'Code: {code}', auto_archive_duration=4320, type=discord.ChannelType.public_thread)
@@ -71,11 +74,9 @@ async def use_codes(ctx, code, player_ids=None):
                     print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: SUCCESS')
                     await log_redeem_attempt(pid, player_name, code, "SUCCESS")
                     redeem_success.append(pid)
-                    update_player[pid] = player_name
                 elif response_status == "ALREADY_RECEIVED":
                     print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: ALREADY CLAIMED')
                     redeem_failed.append(pid)
-                    update_player[pid] = player_name
                 elif response_status == "EXPIRED":
                     print(f'Code expired')
                     await log_redeem_attempt(pid, player_name, code, "EXPIRED")
@@ -98,25 +99,17 @@ async def use_codes(ctx, code, player_ids=None):
             break
         player_ids = failed_ids.copy()
     
-    try:
-        print("Redeem finished, updating names")
-        updated_players, _ = await update_player_data(player_data=update_player)
-        updated_player_count = len(updated_players)
-    except Exception as e:
-        print("Error while updating players: {e}")
-        await log_event(event="UPDATING_NAMES", error=e)
-        return
-    finally:
-        print("Updated names. Sending summary")
-        await send_summary(thread, code, playercount, len(redeem_success), len(redeem_failed), total_attempts, code_invalid, code_expired, updated_player_count)
+
+    await send_summary(thread, code, playercount, len(redeem_success), len(redeem_failed), total_attempts, code_invalid, code_expired)
 
 
-async def send_summary(channel, code, playercount, redeem_success, redeem_failed, total_attempts, code_invalid, code_expired, updated_player_count):
+
+async def send_summary(channel, code, playercount, redeem_success, redeem_failed, total_attempts, code_invalid, code_expired):
     embed = discord.Embed(title=f"Stats for giftcode: {code}")
     embed.add_field(name="Players in database", value=f"{playercount}", inline=False)
     embed.add_field(name="Successfully redeemed for", value=f"{redeem_success} players", inline=True)
     embed.add_field(name="Already used or failed for", value=f"{redeem_failed} players", inline=True)
-    footer_text = f"Redeemed in {total_attempts} tries. Updated {updated_player_count} names."
+    footer_text = f"Redeemed in {total_attempts} tries."
     if code_invalid:
         footer_text = "Code did not exist. Exited early."
     elif code_expired:

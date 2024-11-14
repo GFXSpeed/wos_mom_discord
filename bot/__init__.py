@@ -9,6 +9,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 WHO_IS = int(os.getenv("WHO_IS_CHANNEL"))
 ANNOUNCEMENT = int(os.getenv("ANNOUNCEMENT_CHANNEL"))
+NEWS = int(os.getenv("NEWS_CHANNEL"))
 
 intents = Intents.default()
 intents.message_content = True

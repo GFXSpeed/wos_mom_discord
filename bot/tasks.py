@@ -1,7 +1,10 @@
+import asyncio
+import discord
 from .custom_logging import log_event
 from discord.ext import tasks
 from datetime import datetime, timedelta, timezone
 from bot import bot, GUILD_ID, WHO_IS, ANNOUNCEMENT
+from .player_management import update_player_data, format_furnance_level
 
 @tasks.loop(minutes=60)
 async def check_guesswho():
@@ -66,3 +69,101 @@ async def event_reminder():
 @event_reminder.before_loop
 async def before_event_reminder():
     await bot.wait_until_ready()
+
+
+@tasks.loop(hours=20)
+async def scheduled_update():
+    #channel = bot.get_channel(1306307007334322176) #MOMS news channel
+    channel = bot.get_channel(1237126201454100531) #speeds test channel
+    
+    if not channel:
+        print("Update channel not found.")
+        return
+
+    # Ausführen von `update_player_data` und Änderungen verfolgen
+    updated_players, pending_players = await update_player_data()
+
+    if not updated_players and not pending_players:
+        return  # Keine Änderungen, keine Nachricht senden
+
+    # Funktion, um Embeds zu senden, wenn sie 25 Felder erreicht haben
+    async def send_embed(embed, embed_list):
+        if len(embed.fields) > 0:
+            embed_list.append(embed)
+        if len(embed_list) > 0:
+            for e in embed_list:
+                await channel.send(embed=e)
+
+    # Embeds vorbereiten
+    name_embed = discord.Embed(title="Updated Player Names", color=discord.Color.blue())
+    level_embed = discord.Embed(title="Updated Player Furnance Levels", color=discord.Color.green())
+    region_embed = discord.Embed(title="Updated Player Regions", color=discord.Color.orange())
+    pending_embed = discord.Embed(title="Pending Players (Errors or Outside Region 543)", color=discord.Color.red())
+
+    name_embeds, level_embeds, region_embeds, pending_embeds = [], [], [], []
+
+    # Änderungen nach Typ sortieren und hinzufügen
+    for player in updated_players:
+        player_id = player["player_id"]
+        player_name = player["new_name"] or player["old_name"]
+
+        # Formatierte Levels laden
+        old_furnance_level = await format_furnance_level(player["old_furnance_level"])
+        new_furnance_level = await format_furnance_level(player["new_furnance_level"])
+
+        # Name-Änderungen
+        if player["new_name"]:
+            name_embed.add_field(
+                name=f"ID: {player_id} - {player_name}",
+                value=f"{player['old_name']} -> {player['new_name']}",
+                inline=False
+            )
+            if len(name_embed.fields) >= 25:
+                await send_embed(name_embed, name_embeds)
+                name_embed = discord.Embed(title="Updated Player Names (cont.)", color=discord.Color.blue())
+
+        # Level-Änderungen
+        if player["new_furnance_level"] is not None:
+            level_embed.add_field(
+                name=f"ID: {player_id} - {player_name}",
+                value=f"{old_furnance_level} -> {new_furnance_level}",
+                inline=False
+            )
+            if len(level_embed.fields) >= 25:
+                await send_embed(level_embed, level_embeds)
+                level_embed = discord.Embed(title="Updated Player Furnance Levels (cont.)", color=discord.Color.green())
+
+        # State-Änderungen
+        if player["new_state"] is not None:
+            region_embed.add_field(
+                name=f"ID: {player_id} - {player_name}",
+                value=f"{player['old_state']} -> {player['new_state']}",
+                inline=False
+            )
+            if len(region_embed.fields) >= 25:
+                await send_embed(region_embed, region_embeds)
+                region_embed = discord.Embed(title="Updated Player Regions (cont.)", color=discord.Color.orange())
+
+    # Ausstehende Spieler aufgrund Fehler oder Region 543
+    for player_id, player_name in pending_players:
+        pending_embed.add_field(
+            name=f"ID: {player_id} - {player_name}",
+            value=f"Name: {player_name}",
+            inline=False
+        )
+        if len(pending_embed.fields) >= 25:
+            await send_embed(pending_embed, pending_embeds)
+            pending_embed = discord.Embed(title="Pending Players (cont.)", color=discord.Color.red())
+
+    # Restliche, gefüllte Embeds senden
+    await send_embed(name_embed, name_embeds)
+    await send_embed(level_embed, level_embeds)
+    await send_embed(region_embed, region_embeds)
+    await send_embed(pending_embed, pending_embeds)
+
+
+@scheduled_update.before_loop
+async def before_event_reminder():
+    await bot.wait_until_ready()
+
+    

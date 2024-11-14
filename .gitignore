@@ -130,6 +130,8 @@ ENV/
 env.bak/
 venv.bak/
 players.json
+players.db
+players_debug.db
 
 # Spyder project settings
 .spyderproject
