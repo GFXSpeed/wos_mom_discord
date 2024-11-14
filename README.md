@@ -15,9 +15,11 @@ Welcome to wos_mom_discord, a Discord bot designed to enhance your server experi
 3. (Optional: Subscribe to offical WOS-Discord-Giftcode-Channel for automatic redeem)
 
 ## Available Commands
-- /add_id - Adds a player ID. Usage: `/add_id <player_id>`
+- /add_id - Adds a player ID. Player will recieve gifts and will be included in daily updates. Usage: `/add_id <player_id>`
+- /watch - Same as add_id but players wont recieve gifts. `/watch <player_id>`
 - /remove_id - Removes player IDs. Usage: `/remove_id <player_id, player_id>`
 - /list_ids - Lists all player IDs and names. Usage: `/list_ids`
+- /watchlist - Lists all player IDs and names on the watchlist. Usage: `/watchlist`
 - /details - Shows details of a player. Usage: `/details <player_id>`
 - /update_player - Updates all player data to ensure validity. Usage `/update_player`
 - /info - Shows what this bot is about 
@@ -27,6 +29,7 @@ Welcome to wos_mom_discord, a Discord bot designed to enhance your server experi
 ## Available Actions
 - Automatic redemption of giftcodes officals pattern is recognized
 - Event-Announcements. Send a reminder with `@everyone` 10 miuntes before your Discord-Events starts
+- Daily updates. Playerdata will be updated every 24 hours. Updates will be sent to your news-channel
 
 ## Logging:
 Logs of Bot, used commands, events and redeem-events can be found in ./logs Folder
@@ -34,8 +37,8 @@ Logs of Bot, used commands, events and redeem-events can be found in ./logs Fold
 ## Preview
 ![Commands Preview](https://github.com/user-attachments/assets/61655145-b5e0-4cb6-9eab-a245a57ac84b)
 ![Redeem Preview](https://github.com/user-attachments/assets/70c70e58-e241-4813-b7c7-f984a9776f10)
-![Various Commands Preview](https://github.com/user-attachments/assets/2d65336b-3429-42be-b96b-84c3c8338f43)
-
+![Various Commands Preview](https://github.com/user-attachments/assets/ccc4ad80-18cc-4c95-b297-bc07c0573edd)
+![Update News Preview](https://github.com/user-attachments/assets/5a3263bd-919e-40e0-ab72-13ecd3d1d0cc)
 
 ## Contact
 Feel free to reach out if you find bugs or have ideas for new features. Find me on discord: `gfxspeed` 
