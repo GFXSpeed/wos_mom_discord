@@ -101,7 +101,10 @@ async def add_id(interaction: discord.Interaction, player_id: str):
 
                 
                 embed = discord.Embed(title="", color=discord.Color.blue())
-                embed.set_author(name=player_name, icon_url=stove_lv_content) 
+                if isinstance(stove_lv_content, str) and stove_lv_content.startswith(("http://", "https://")):
+                    embed.set_author(name=player_name, icon_url=stove_lv_content)
+                else:
+                    embed.set_author(name=player_name) 
                 embed.add_field(name="Player-ID", value=player_id, inline=False)
                 embed.set_thumbnail(url=avatar_image)
                 await interaction.followup.send(embed=embed)
@@ -151,7 +154,10 @@ async def add_id(interaction: discord.Interaction, player_id: str):
 
                 
                 embed = discord.Embed(title="", color=discord.Color.blue())
-                embed.set_author(name=player_name, icon_url=stove_lv_content) 
+                if isinstance(stove_lv_content, str) and stove_lv_content.startswith(("http://", "https://")):
+                    embed.set_author(name=player_name, icon_url=stove_lv_content)
+                else:
+                    embed.set_author(name=player_name)  
                 embed.add_field(name="Player-ID", value=player_id, inline=False)
                 embed.set_thumbnail(url=avatar_image)
                 await interaction.followup.send(embed=embed)
@@ -322,7 +328,10 @@ async def details(interaction: discord.Interaction, player_id: str):
     conn.close()
 
     embed = discord.Embed(title="", color=discord.Color.blue())
-    embed.set_author(name=nickname, icon_url=stove_lv_content) 
+    if isinstance(stove_lv_content, str) and stove_lv_content.startswith(("http://", "https://")):
+        embed.set_author(name=nickname, icon_url=stove_lv_content)
+    else:
+        embed.set_author(name=nickname)
     embed.add_field(name="Player-ID", value=player_id, inline=False)
     embed.add_field(name="Furnance-Level", value=formatted_stove_lv)
     embed.add_field(name="State", value=state)
