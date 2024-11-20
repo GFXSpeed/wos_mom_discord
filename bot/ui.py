@@ -1,5 +1,6 @@
 import discord
 import sqlite3
+from .custom_logging import log_event
 
 class PlayerActionView(discord.ui.View):
     def __init__(self, player_id, player_name):
@@ -68,11 +69,12 @@ class PlayerDetailsView(discord.ui.View):
 
         conn.commit()
         conn.close()
-
+        
         # Add without redeem-Value
         status = "Watchlist" if not redeem else "Database"
-        await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) has been added to the {status}.", ephemeral=True)
+        await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) has been added to the {status}.", ephemeral=False)
         await self.disable_buttons(interaction)
+        await log_event("DETAILS_INTERACTION - ADD", player = self.player_name, player_id = self.player_id, redeem = redeem)
 
     @discord.ui.button(label="Add to Database", style=discord.ButtonStyle.success)
     async def add_to_database_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -91,8 +93,9 @@ class PlayerDetailsView(discord.ui.View):
         conn.commit()
         conn.close()
 
-        await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) has been removed from the database.", ephemeral=True)
+        await interaction.response.send_message(f"Player {self.player_name} (ID: {self.player_id}) has been removed from the database.", ephemeral=False)
         await self.disable_buttons(interaction)
+        await log_event("DETAILS_INTERACTION - DELETE", player = self.player_name, player_id = self.player_id)
 
     # Helper to disable all buttons after use
     async def disable_buttons(self, interaction: discord.Interaction):
