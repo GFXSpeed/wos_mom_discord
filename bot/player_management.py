@@ -11,16 +11,23 @@ from .ui import PlayerActionView, PlayerDetailsView
 
 #################### HELPER FUNCTIONS ####################
 async def format_furnance_level(level):
+    if level is None:
+        level = 0
+    if not isinstance(level, int):
+        return "Invalid Level"
+    
+    if level == 0:
+        return "Error on getting level"
     if level <= 30:
         return f"Furnance-Level {level}"
-    elif 31 <= level <= 34:
+    if 31 <= level <= 34:
         sub_level = level - 30
         return f"30-{sub_level}"
-    else:
-        # FC starting at lvl 35
-        fc_level = (level - 35) // 5 + 1  # Main-FC-Level
-        sub_level = (level - 35) % 5      # Sub-Levels
-        return f"FC {fc_level}" if sub_level == 0 else f"FC {fc_level}-{sub_level}"
+    
+    # FC starting at lvl 35
+    fc_level = (level - 35) // 5 + 1  # Main-FC-Level
+    sub_level = (level - 35) % 5      # Sub-Levels
+    return f"FC {fc_level}" if sub_level == 0 else f"FC {fc_level}-{sub_level}"
 
 async def get_player_choices(interaction: discord.Interaction, current: str):
     conn = sqlite3.connect('players.db')
