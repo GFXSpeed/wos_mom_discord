@@ -5,49 +5,61 @@ from datetime import datetime
 from bot import bot
 from .wos_api import get_playerdata, encode_data
 from .custom_logging import log_redeem_attempt
+from .captcha import CaptchaSolver
 
 WOS_GIFTCODE_URL = 'https://wos-giftcode-api.centurygame.com/api/gift_code'
 
-async def claim_giftcode(player_id, giftcode):
+async def claim_giftcode(player_id: str, giftcode: str):
+    solver = CaptchaSolver()
     async with httpx.AsyncClient() as client:
         playerdata = await get_playerdata(player_id, client)
-        
-        if playerdata is None:
+        if not playerdata:
             return "ERROR", None
+        
+        captcha_code = await solver.solve(player_id, client)
 
-        data = await encode_data({
+        payload = {
             "fid": player_id,
             "cdk": giftcode,
+            "captcha_code": captcha_code,
             "time": str(int(datetime.now().timestamp()))
-        })
-        player_name = playerdata.get("nickname")
+        }
+        data = await encode_data(payload)
         response = await client.post(WOS_GIFTCODE_URL, data=data)
 
-        if response.status_code == 200:
-            response_data = response.json()
-            if response_data.get("msg") == "SUCCESS":
-                return "SUCCESS", player_name
-            elif response_data.get("msg") == "RECEIVED." and response_data.get("err_code") == 40008:
-                return "ALREADY_RECEIVED", player_name
-            elif response_data.get("msg") == "TIME ERROR." and response_data.get("err_code") == 40007:
-                return "EXPIRED", player_name
-            elif response_data.get("msg") == "CDK NOT FOUND." and response_data.get("err_code") == 40014:
-                return "INVALID", player_name
-            else:
-                return "ERROR", player_name
-        else:
-            print(f"Error: Received status code {response.status_code}")
-            return "ERROR", player_name
+    if response.status_code != 200:
+        return "ERROR", None
 
+    obj = response.json()
+    if isinstance(obj, list):
+        obj = obj[0] if obj else {}
+    msg = obj.get("msg")
+    err = obj.get("err_code")
+    nickname = obj.get("nickname")
 
-async def use_codes(ctx, code, player_ids=None):
+    if msg == "SUCCESS":
+        return "SUCCESS", nickname
+    if msg == "RECEIVED." and err == 40008:
+        return "ALREADY_RECEIVED", nickname
+    if msg == "TIME ERROR." and err == 40007:
+        return "EXPIRED", nickname
+    if msg == "CDK NOT FOUND." and err == 40014:
+        return "INVALID", nickname
+    if msg == "CAPTCHA CHECK ERROR." and err == 40103:
+        return "CAPTCHA_ERROR", nickname
+    return "ERROR", nickname
+
+async def use_codes(ctx, code: str, player_ids=None):
     redeem_success = []
     redeem_failed = []
     code_invalid = False
     code_expired = False
-    total_attempts = 0
-    max_attempts = 5
+    total_rounds = 0
+    max_rounds = 5
+    captcha_solved = 0
+    captcha_failed = 0
 
+    # Load player IDs from database if not provided
     if player_ids is None:
         conn = sqlite3.connect('players.db')
         cursor = conn.cursor()
@@ -56,61 +68,104 @@ async def use_codes(ctx, code, player_ids=None):
         conn.close()
 
     playercount = len(player_ids)
-    thread = await ctx.channel.create_thread(name=f'Code: {code}', auto_archive_duration=4320, type=discord.ChannelType.public_thread)
-    starting_info = f'Starting to redeem code **{code}** for {playercount} players. This could take up to {(12 * playercount) / 60:.1f} minutes'
-    await thread.send(starting_info)
+    thread = await ctx.channel.create_thread(
+        name=f'Code: {code}',
+        auto_archive_duration=4320,
+        type=discord.ChannelType.public_thread
+    )
+    await thread.send(
+        f'Starting to redeem code **{code}** for {playercount} players. '
+        f'Approximate time: {(12 * playercount) / 60:.1f} minutes.'
+    )
 
-    while player_ids and total_attempts < max_attempts:
-        total_attempts += 1
-        failed_ids = []
-
-        for pid in player_ids:
+    pending_ids = player_ids.copy()
+    # Main retry rounds
+    while pending_ids and total_rounds < max_rounds and not (code_invalid or code_expired):
+        total_rounds += 1
+        new_pending = []
+        for pid in pending_ids:
+            # fetch player info
             try:
-                response_status, player_name = await claim_giftcode(pid, code)
-
-                if response_status == "SUCCESS":
-                    print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: SUCCESS')
-                    await log_redeem_attempt(pid, player_name, code, "SUCCESS")
-                    redeem_success.append(pid)
-                elif response_status == "ALREADY_RECEIVED":
-                    print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: ALREADY CLAIMED')
-                    redeem_failed.append(pid)
-                elif response_status == "EXPIRED":
-                    print(f'Code expired')
-                    await log_redeem_attempt(pid, player_name, code, "EXPIRED")
-                    code_expired = True
-                    break
-                elif response_status == "INVALID":
-                    print(f'Code invalid')
-                    await log_redeem_attempt(pid, player_name, code, "INVALID")
-                    code_invalid = True
-                    break
-                else:
-                    failed_ids.append(pid)
-                    print(f'Try no. {total_attempts}, ID: {pid}, Name: {player_name}, Result: FAILED, adding to retry')
-                    await log_redeem_attempt(pid, player_name, code, "ERROR")
+                playerdata = await get_playerdata(pid, httpx.AsyncClient())
             except Exception as e:
-                print(e)
-                failed_ids.append(pid)
+                print(f"Error fetching data for {pid}: {e}")
+                new_pending.append(pid)
+                continue
+            if not playerdata:
+                redeem_failed.append(pid)
+                await log_redeem_attempt(pid, None, code, "ERROR")
+                continue
+            nickname = playerdata.get("nickname")
 
-        if not failed_ids:
-            break
-        player_ids = failed_ids.copy()
-    
-    await send_summary(thread, code, playercount, len(redeem_success), len(redeem_failed), total_attempts, code_invalid, code_expired)
+            # up to 3 captcha attempts
+            solved = False
+            for _ in range(3):
+                try:
+                    status, _ = await claim_giftcode(pid, code)
+                except Exception as e:
+                    print(f"Error in redeem for {pid}: {e}")
+                    captcha_failed += 1
+                    continue
 
+                if status == "SUCCESS":
+                    redeem_success.append(pid)
+                    captcha_solved += 1
+                    await log_redeem_attempt(pid, nickname, code, "SUCCESS")
+                    print(f"Success: {pid}, {nickname}")
+                    solved = True
+                    break
+                if status == "ALREADY_RECEIVED":
+                    redeem_failed.append(pid)
+                    captcha_solved += 1
+                    await log_redeem_attempt(pid, nickname, code, "ALREADY_RECEIVED")
+                    print(f"Already received: {pid}, {nickname}")
+                    solved = True
+                    break
+                if status == "EXPIRED":
+                    code_expired = True
+                    await log_redeem_attempt(pid, nickname, code, "EXPIRED")
+                    print(f"Code expired: {pid}, {nickname}, {code}")
+                    solved = True
+                    break
+                if status == "INVALID":
+                    code_invalid = True
+                    await log_redeem_attempt(pid, nickname, code, "INVALID")
+                    print(f"Code invalid: {pid}, {nickname}, {code}")
+                    solved = True
+                    break
+                if status == "CAPTCHA_ERROR":
+                    print(f"Captcha incorrect for {pid}, trying next/retry")
+                    continue
 
+                # captcha error
+                captcha_failed += 1
+            # end attempts
 
-async def send_summary(channel, code, playercount, redeem_success, redeem_failed, total_attempts, code_invalid, code_expired):
+            if not solved:
+                new_pending.append(pid)
+        # end for
+        pending_ids = new_pending
+
+    # Calculate captcha success rate
+    total_captcha = captcha_solved + captcha_failed
+    captcha_rate = (captcha_solved / total_captcha * 100) if total_captcha else 0
+
+    await send_summary(
+        thread, code, playercount,
+        len(redeem_success), len(redeem_failed),
+        total_rounds, code_invalid, code_expired, captcha_rate
+    )
+
+async def send_summary(channel, code, playercount, redeemed, failed, rounds, invalid, expired, captcha_pct):
     embed = discord.Embed(title=f"Stats for giftcode: {code}")
-    embed.add_field(name="Players in database", value=f"{playercount}", inline=False)
-    embed.add_field(name="Successfully redeemed for", value=f"{redeem_success} players", inline=True)
-    embed.add_field(name="Already used or failed for", value=f"{redeem_failed} players", inline=True)
-    footer_text = f"Redeemed in {total_attempts} tries."
-    if code_invalid:
-        footer_text = "Code did not exist. Exited early."
-    elif code_expired:
-        footer_text = "Code expired. Exited early."
-    embed.set_footer(text=footer_text)
+    embed.add_field(name="Players in DB", value=str(playercount), inline=False)
+    embed.add_field(name="Redeemed", value=f"{redeemed} players", inline=True)
+    embed.add_field(name="Failed/Skipped", value=f"{failed} players", inline=True)
+    footer = f"Rounds: {rounds}. Captcha success rate: {captcha_pct:.1f}%"
+    if invalid:
+        footer = "Code invalid. Exited early."
+    elif expired:
+        footer = "Code expired. Exited early."
+    embed.set_footer(text=footer)
     await channel.send(embed=embed)
     print("Done")
