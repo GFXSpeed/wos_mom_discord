@@ -45,6 +45,8 @@ async def claim_giftcode(player_id: str, giftcode: str):
         return "EXPIRED", nickname
     if msg == "CDK NOT FOUND." and err == 40014:
         return "INVALID", nickname
+    if msg == "USED." and err == 40005:
+        return "CLAIM_LIMIT", nickname
     if msg == "CAPTCHA CHECK ERROR." and err == 40103:
         return "CAPTCHA_ERROR", nickname
     return "ERROR", nickname
@@ -133,6 +135,12 @@ async def use_codes(ctx, code: str, player_ids=None):
                     print(f"Code invalid: {pid}, {nickname}, {code}")
                     solved = True
                     break
+                if status == "CLAIM_LIMIT":
+                    code_invalid = True
+                    await log_redeem_attempt(pid, nickname, code, "CLAIM LIMIT REACHED")
+                    print(f"Code invalid: {pid}, {nickname}, {code}")
+                    solved = True
+                    break                
                 if status == "CAPTCHA_ERROR":
                     print(f"Captcha incorrect for {pid}, trying next/retry")
                     continue
