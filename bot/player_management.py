@@ -9,6 +9,8 @@ from .wos_api import get_playerdata
 from .custom_logging import log_commands, log_event
 from .ui import PlayerActionView, PlayerDetailsView
 
+DB_PATH = 'players.db'
+
 #################### HELPER FUNCTIONS ####################
 async def format_furnance_level(level):
     if level is None:
@@ -29,26 +31,29 @@ async def format_furnance_level(level):
     sub_level = (level - 35) % 5      # Sub-Levels
     return f"FC {fc_level}" if sub_level == 0 else f"FC {fc_level}-{sub_level}"
 
-async def get_player_choices(interaction: discord.Interaction, current: str):
-    conn = sqlite3.connect('players.db')
+async def get_player_autocomplete(interaction: discord.Interaction, current: str):
+    """Autocomplete-Funktion für Spieler IDs"""
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-
-    #get data of DB
-    cursor.execute("""
-        SELECT player_id, name FROM players
-        WHERE name LIKE ? OR player_id LIKE ?
-        LIMIT 25
-    """, (f'%{current}%', f'%{current}%'))
-
-    results = cursor.fetchall()
-    conn.close()
-
-    # Create choices for autocomplete 
-    choices = [
-        app_commands.Choice(name=f"{name} (ID: {player_id})", value=str(player_id))
-        for player_id, name in results
-    ]
-    return choices
+    
+    try:
+        cursor.execute('''
+            SELECT player_id, name FROM players
+            WHERE name LIKE ? OR CAST(player_id AS TEXT) LIKE ?
+            LIMIT 25
+        ''', (f'%{current}%', f'%{current}%'))
+        
+        results = cursor.fetchall()
+        choices = [
+            app_commands.Choice(name=f"{name} (ID: {player_id})", value=str(player_id))
+            for player_id, name in results
+        ]
+        return choices
+    except Exception as e:
+        print(f"Error in player autocomplete: {e}")
+        return []
+    finally:
+        conn.close()
 
 # Helper to update names during update process
 async def update_player_in_db(player_id, name, state, furnance_level):
@@ -306,7 +311,7 @@ async def list_ids(interaction: discord.Interaction):
 
         
 @bot.tree.command(name="details", description="Shows details of a player. Usage: /details <player_id>")
-@app_commands.autocomplete(player_id=get_player_choices)
+@app_commands.autocomplete(player_id=get_player_autocomplete)
 async def details(interaction: discord.Interaction, player_id: str):
     await log_commands(interaction)
     await interaction.response.defer()

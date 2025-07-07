@@ -24,7 +24,7 @@ allowed_roles = ["Admin", "R4", "R5"]
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 def load_modules():
-    from . import events, guesswho, player_management, user_commands, redeem, ui, wos_api 
+    from . import events, guesswho, player_management, user_commands, redeem, ui, wos_api, giftcode_manager 
     print("Modules loaded")
 
 def initialize_database():
@@ -44,11 +44,41 @@ def initialize_database():
             )
         ''')
 
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS giftcode_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                player_id INTEGER NOT NULL,
+                giftcode TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempt_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                player_name TEXT,
+                FOREIGN KEY (player_id) REFERENCES players (player_id),
+                UNIQUE(player_id, giftcode)
+            )
+        ''')
+
         conn.commit()
         conn.close()
-        print("'players.db' created successfully with the 'players' table.")
+        print("'players.db' created successfully with the 'players' and 'giftcode_attempts' tables.")
     else:
         print("'players.db' already exists.")
+        # Check if giftcode_attempts table exists, create if not
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS giftcode_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                player_id INTEGER NOT NULL,
+                giftcode TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempt_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                player_name TEXT,
+                FOREIGN KEY (player_id) REFERENCES players (player_id),
+                UNIQUE(player_id, giftcode)
+            )
+        ''')
+        conn.commit()
+        conn.close()
 
 def run():
     initialize_database()

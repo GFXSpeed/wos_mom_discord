@@ -19,6 +19,10 @@ MODEL_PATH = os.path.join(CAPTCHA_DIR, 'model.keras')
 BASE64_STORE_PATH = os.path.join(CAPTCHA_DIR, 'base64_strings.txt')
 os.makedirs(CAPTCHA_DIR, exist_ok=True)
 
+# Global cooldown tracking for captcha requests per player
+_last_captcha_request = {}
+CAPTCHA_COOLDOWN_SECONDS = 3  # Cooldown between captcha requests for same player
+
 class CaptchaSolver:
     def __init__(self, model_path: str = MODEL_PATH):
         self.model = load_model(model_path)
@@ -30,11 +34,35 @@ class CaptchaSolver:
         _, self.height, self.width, self.channels = self.model.input_shape
 
     async def _fetch_captcha(self, player_id: str, client: httpx.AsyncClient) -> bytes:
+        global _last_captcha_request
+        
+        # Check cooldown for this player
+        now = datetime.now().timestamp()
+        if player_id in _last_captcha_request:
+            time_since_last = now - _last_captcha_request[player_id]
+            if time_since_last < CAPTCHA_COOLDOWN_SECONDS:
+                wait_time = CAPTCHA_COOLDOWN_SECONDS - time_since_last
+                print(f"Captcha cooldown for player {player_id}: waiting {wait_time:.1f}s")
+                await asyncio.sleep(wait_time)
+        
+        # Update last request time
+        _last_captcha_request[player_id] = datetime.now().timestamp()
+        
         payload = {'fid': str(player_id), 'time': str(int(datetime.now().timestamp()))}
         data = await encode_data(payload)
         resp = await client.post(WOS_CAPTCHA_URL, data=data)
         resp.raise_for_status()
         obj = resp.json()
+        
+        # Handle "TOO FREQUENT" error specifically
+        if obj.get('err_code') == 40100 and obj.get('msg') == "CAPTCHA GET TOO FREQUENT.":
+            print(f"Captcha too frequent for player {player_id}, waiting 5 seconds and retrying...")
+            await asyncio.sleep(5)
+            _last_captcha_request[player_id] = datetime.now().timestamp()
+            resp = await client.post(WOS_CAPTCHA_URL, data=data)
+            resp.raise_for_status()
+            obj = resp.json()
+        
         if obj.get('msg') != 'SUCCESS' or 'data' not in obj:
             raise RuntimeError(f"Captcha API error: {obj}")
 
@@ -47,7 +75,9 @@ class CaptchaSolver:
 
         b64 = b64_field.split('base64,', 1)[1]
         with open(BASE64_STORE_PATH, 'a') as f:
-            f.write(json.dumps({'b64': b64, 'time': datetime.now().isoformat()}) + '\n')
+            f.write(json.dumps({'b64': b64, 'time': now.isoformat()}) + '\n')
+        
+        _last_captcha_request[player_id] = now
         return base64.b64decode(b64)
 
     def _preprocess(self, raw: bytes) -> np.ndarray:

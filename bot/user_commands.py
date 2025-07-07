@@ -1,8 +1,10 @@
 import discord
+import sqlite3
 from discord import app_commands
 from bot import bot, allowed_roles
 from .custom_logging import log_commands
 from .redeem import use_codes
+from .giftcode_manager import get_giftcode_autocomplete
 
 @bot.tree.command(name="info", description="What this bot is about")
 async def info(interaction: discord.Interaction):
@@ -15,6 +17,8 @@ async def info(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="code", description="Starts process with manual giftcode. R4+ only. Usage: /code <code>")
+@app_commands.autocomplete(code=get_giftcode_autocomplete)
+@app_commands.checks.has_any_role(*allowed_roles)
 async def code(interaction: discord.Interaction, code: str):
     print(f'Starting with manual code {code}')
     await log_commands(interaction)
