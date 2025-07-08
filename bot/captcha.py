@@ -75,7 +75,7 @@ class CaptchaSolver:
 
         b64 = b64_field.split('base64,', 1)[1]
         with open(BASE64_STORE_PATH, 'a') as f:
-            f.write(json.dumps({'b64': b64, 'time': now.isoformat()}) + '\n')
+            f.write(json.dumps({'b64': b64, 'time': datetime.fromtimestamp(now).isoformat()}) + '\n')
         
         _last_captcha_request[player_id] = now
         return base64.b64decode(b64)
