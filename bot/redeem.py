@@ -181,7 +181,7 @@ async def use_codes(ctx, code: str, player_ids=None):
                 for attempt in range(3):
                     try:
                         status, _ = await claim_giftcode(pid, code, client)
-                        print(f"Attempt {attempt + 1} for {pid}: {status}")
+                        # print(f"Attempt {attempt + 1} for {pid}: {status}") #used for debug, can be enabled if needed
 
                         # Check for specific status results
                         if status == "SUCCESS":
