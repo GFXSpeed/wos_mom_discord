@@ -319,7 +319,7 @@ async def send_summary(channel, code, playercount, redeemed, already_received, f
     embed.add_field(name="Players in DB", value=str(playercount), inline=False)
     embed.add_field(name="Redeemed", value=f"{redeemed} players", inline=True)
     embed.add_field(name="Already received", value=f"{already_received} players", inline=True)
-    embed.add_field(name="Failed/Skipped", value=f"{failed} players", inline=True)
+    embed.add_field(name="Failed", value=f"{failed} players", inline=True)
     
     if db_summary:
         status_text = ""
