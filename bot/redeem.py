@@ -49,6 +49,8 @@ async def claim_giftcode(player_id: str, giftcode: str, client: httpx.AsyncClien
         return "INVALID", nickname
     if msg == "USED." and err == 40005:
         return "CLAIM_LIMIT", nickname
+    if msg == "RECHARGE_MONEY ERROR." and err == 40017:
+        return "REQUIREMENT", nickname
     if msg == "CAPTCHA CHECK ERROR." and err == 40103:
         return "CAPTCHA_ERROR", nickname
     return "ERROR", nickname
@@ -95,6 +97,7 @@ async def filter_players(code: str, player_ids: List[str] = None) -> Tuple[List[
 async def use_codes(ctx, code: str, player_ids=None):
     redeem_success = []
     redeem_failed = []
+    already_received = []
     code_invalid = False
     code_expired = False
     total_rounds = 0
@@ -124,13 +127,13 @@ async def use_codes(ctx, code: str, player_ids=None):
         init_message += f' Approximate time: {(12 * playercount) / 60:.1f} minutes.'
         await thread.send(init_message)
 
-        def create_progress_message(processed, total, success, failed):
+        def create_progress_message(processed, total, success, already_received, failed):
             progress = processed / total
             bar_length = 20
             filled = int(bar_length * progress)
             bar = "█" * filled + "░" * (bar_length - filled)
-            return f"`{bar}` {processed}/{total} ({progress*100:.1f}%)\n\n✅ Success: {success} ❌ Failed: {failed}"
-        status_message = await thread.send(create_progress_message(0, playercount, 0, 0))
+            return f"`{bar}` {processed}/{total} ({progress*100:.1f}%)\n\n✅ Success: {success} 🔄 Already Received: {already_received} ❌ Failed: {failed}"
+        status_message = await thread.send(create_progress_message(0, playercount, 0, 0, 0))
 
 
         pending_ids = player_ids.copy()
@@ -145,11 +148,14 @@ async def use_codes(ctx, code: str, player_ids=None):
                 processed_count += 1
 
                 # Update progress message every 5 players or when status changes
-                if processed_count % 5 == 0 or len(redeem_success) + len(redeem_failed) > 0:
+                if processed_count % 5 == 0 or (
+                    len(redeem_success) + len(already_received) + len(redeem_failed) > 0
+                ):
                     await status_message.edit(content=create_progress_message(
                         processed_count,
                         playercount,
                         len(redeem_success),
+                        len(already_received),
                         len(redeem_failed)
                     ))
 
@@ -188,11 +194,20 @@ async def use_codes(ctx, code: str, player_ids=None):
                             break
 
                         elif status == "ALREADY_RECEIVED":
-                            redeem_failed.append(pid)
+                            already_received.append(pid)
                             captcha_solved += 1
                             await log_redeem_attempt(pid, nickname, code, status)
                             await record_giftcode_attempt(pid, nickname, code, status)
                             print(f"Already received: {pid}, {nickname}")
+                            solved = True
+                            break
+
+                        elif status == "REQUIREMENT":
+                            redeem_failed.append(pid)
+                            captcha_solved += 1
+                            await log_redeem_attempt(pid, nickname, code, status)
+                            await record_giftcode_attempt(pid, nickname, code, status)
+                            print(f"Requirement error: {pid}, {nickname}")
                             solved = True
                             break
 
@@ -264,13 +279,15 @@ async def use_codes(ctx, code: str, player_ids=None):
                     new_pending.append(pid)
                 else:
                     current_success = len(redeem_success)
+                    current_already_received = len(already_received)
                     current_failed = len(redeem_failed)
-                    print(f"Current status: {current_success} successful, {current_failed} failed")
+                    print(f"Current status: {current_success} successful, {current_failed} failed, {current_already_received} already received")
                     await status_message.edit(content=create_progress_message(
                         processed_count,
                         playercount,
                         current_success,
-                        current_failed
+                        current_already_received,
+                        current_failed,
                     ))
 
                 await asyncio.sleep(1)
@@ -290,17 +307,18 @@ async def use_codes(ctx, code: str, player_ids=None):
         captcha_rate = (captcha_solved / total_captcha * 100) if total_captcha else 0
         await send_summary(
             thread, code, playercount,
-            len(redeem_success), len(redeem_failed),
+            len(redeem_success), len(already_received), len(redeem_failed),
             total_rounds, code_invalid, code_expired, captcha_rate
         )
 
-async def send_summary(channel, code, playercount, redeemed, failed, rounds, invalid, expired, captcha_pct):
+async def send_summary(channel, code, playercount, redeemed, already_received, failed, rounds, invalid, expired, captcha_pct):
     from .giftcode_manager import get_giftcode_summary
     db_summary = await get_giftcode_summary(code)
     
     embed = discord.Embed(title=f"Stats for giftcode: {code}")
     embed.add_field(name="Players in DB", value=str(playercount), inline=False)
     embed.add_field(name="Redeemed", value=f"{redeemed} players", inline=True)
+    embed.add_field(name="Already received", value=f"{already_received} players", inline=True)
     embed.add_field(name="Failed/Skipped", value=f"{failed} players", inline=True)
     
     if db_summary:
@@ -311,6 +329,7 @@ async def send_summary(channel, code, playercount, redeemed, failed, rounds, inv
                 'ALREADY_RECEIVED': '🔄',
                 'EXPIRED': '⏰',
                 'INVALID': '❌',
+                'REQUIREMENT': '🤷‍♂️',
                 'CLAIM_LIMIT': '🚫',
                 'CAPTCHA_ERROR': '🔤',
                 'ERROR': '⚠️',

@@ -38,7 +38,7 @@ async def get_giftcode_autocomplete(interaction: discord.Interaction, current: s
 async def record_giftcode_attempt(player_id: str, player_name: str, giftcode: str, status: str):
     """
     Log giftcode attempts in the database.
-    Possible status: SUCCESS, ALREADY_RECEIVED, EXPIRED, INVALID, CLAIM_LIMIT, CAPTCHA_ERROR, ERROR, PENDING
+    Possible status: SUCCESS, ALREADY_RECEIVED, EXPIRED, INVALID, CLAIM_LIMIT, REQUIREMENT, CAPTCHA_ERROR, ERROR, PENDING
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -163,6 +163,7 @@ async def giftcode_status(interaction: discord.Interaction, giftcode: str = None
                 'ALREADY_RECEIVED': '🔄',
                 'EXPIRED': '⏰',
                 'INVALID': '❌',
+                'REQUIREMENT': '🤷‍♂️',
                 'CLAIM_LIMIT': '🚫',
                 'CAPTCHA_ERROR': '🔤',
                 'ERROR': '⚠️',
@@ -213,6 +214,7 @@ async def giftcode_status(interaction: discord.Interaction, giftcode: str = None
                 'ALREADY_RECEIVED': '🔄',
                 'EXPIRED': '⏰',
                 'INVALID': '❌',
+                'REQUIREMENT': '🤷‍♂️',
                 'CLAIM_LIMIT': '🚫',
                 'CAPTCHA_ERROR': '🔤',
                 'ERROR': '⚠️',
