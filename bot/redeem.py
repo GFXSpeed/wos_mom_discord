@@ -51,6 +51,8 @@ async def claim_giftcode(player_id: str, giftcode: str, client: httpx.AsyncClien
         return "CLAIM_LIMIT", nickname
     if msg == "RECHARGE_MONEY ERROR." and err == 40017:
         return "REQUIREMENT", nickname
+    if msg == "RECHARGE_MONEY_VIP ERROR." and err == 40018:
+        return "REQUIREMENT", nickname    
     if msg == "CAPTCHA CHECK ERROR." and err == 40103:
         return "CAPTCHA_ERROR", nickname
     return "ERROR", nickname
