@@ -24,9 +24,3 @@ async def code(interaction: discord.Interaction, code: str):
     await log_commands(interaction)
     await interaction.response.send_message(f"Processing started. See further details in the new thread.")
     await use_codes(interaction, code)
-    
-
-@code.error
-async def code_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.MissingAnyRole):
-        await interaction.response.send_message("Sorry, you are not allowed to do this")

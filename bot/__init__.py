@@ -24,7 +24,7 @@ allowed_roles = ["Admin", "R4", "R5"]
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 def load_modules():
-    from . import events, guesswho, player_management, user_commands, redeem, ui, wos_api, giftcode_manager 
+    from . import events, guesswho, player_management, user_commands, redeem, ui, wos_api, giftcode_manager, treeErrorHandler
     print("Modules loaded")
 
 def initialize_database():
