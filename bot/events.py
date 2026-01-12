@@ -38,9 +38,29 @@ def check_startup_permissions():
         else:
             print(f"[STARTUP] Permissions OK in '{guild.name}' ({guild.id}).")
 
+
+async def sync_commands_to_all_guilds():
+    await bot.wait_until_ready()
+
+    for g in bot.guilds:
+        guild_obj = discord.Object(id=g.id)
+        bot.tree.copy_global_to(guild=guild_obj)
+
+        try:
+            await bot.tree.sync(guild=guild_obj)
+            print(f"[SYNC] Synced commands to: {g.name} ({g.id})")
+        except discord.Forbidden:
+            print(f"[SYNC] Missing permissions in: {g.name} ({g.id})")
+        except discord.HTTPException as e:
+            print(f"[SYNC] Failed for {g.name} ({g.id}): {e}")
+
+async def setup_hook():
+    bot.loop.create_task(sync_commands_to_all_guilds())
+    
+bot.setup_hook = setup_hook
+
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
     await bot.change_presence(activity=discord.Game("Whiteout Survival"), status=discord.Status.online)
     check_startup_permissions()
     check_guesswho.start()
