@@ -5,10 +5,44 @@ from .redeem import use_codes
 from .tasks import check_guesswho, event_reminder, scheduled_update
 from .custom_logging import log_event
 
+def check_startup_permissions():
+    required_permissions = [
+        ("view_channel", "View Channels"),
+        ("send_messages", "Send Messages"),
+        ("embed_links", "Embed Links"),
+        ("read_message_history", "Read Message History"),
+        ("create_public_threads", "Create Public Threads"),
+        ("send_messages_in_threads", "Send Messages in Threads"),
+        ("manage_threads", "Manage Threads"),
+        ("mention_everyone", "Mention Everyone"),
+        ("view_guild_scheduled_events", "View Scheduled Events"),
+    ]
+
+    for guild in bot.guilds:
+        member = guild.me or guild.get_member(bot.user.id)
+        if not member:
+            print(f"[STARTUP] Could not resolve bot member for guild '{guild.name}' ({guild.id}).")
+            continue
+
+        permissions = member.guild_permissions
+        missing = [
+            label for flag, label in required_permissions
+            if getattr(permissions, flag, None) is False
+        ]
+
+        if missing:
+            print(
+                f"[STARTUP] Missing permissions in '{guild.name}' ({guild.id}): "
+                f"{', '.join(missing)}"
+            )
+        else:
+            print(f"[STARTUP] Permissions OK in '{guild.name}' ({guild.id}).")
+
 @bot.event
 async def on_ready():
     await bot.tree.sync()
     await bot.change_presence(activity=discord.Game("Whiteout Survival"), status=discord.Status.online)
+    check_startup_permissions()
     check_guesswho.start()
     event_reminder.start()
     scheduled_update.start()
