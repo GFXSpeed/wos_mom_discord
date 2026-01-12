@@ -1,19 +1,19 @@
 import os
 import logging
 
-# Verzeichnis für Logs
+# directory for log files
 log_directory = "./logs/"
 if not os.path.exists(log_directory):
     os.makedirs(log_directory)
 
-# Globale Logging-Konfiguration
+# Global Logging Configuration
 logging.basicConfig(
     level=logging.WARNING,
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-# Funktion zur Erstellung eines Loggers mit spezifischem Namen und Datei
+# function to create a logger with specific name and file
 def create_logger(name, filename, level=logging.INFO):
     logger = logging.getLogger(name)
     logger.setLevel(level)
@@ -22,13 +22,13 @@ def create_logger(name, filename, level=logging.INFO):
     logger.addHandler(handler)
     return logger
 
-# Logger erstellen
+# Create loggers for different purposes
 general_logger = create_logger('general_logger', 'bot.log', logging.WARNING)
 redeem_logger = create_logger('redeem_logger', 'giftcode_redeem.log')
 commands_logger = create_logger('commands_logger', 'commands.log')
 event_logger = create_logger('event_logger', 'events.log')
 
-# Asynchrone Log-Funktionen
+# Async functions to log specific events
 async def log_redeem_attempt(player_id, player_name, code, result):
     redeem_logger.info(f"Player ID: {player_id}, Player Name: {player_name}, Code: {code}, Result: {result}")
 
