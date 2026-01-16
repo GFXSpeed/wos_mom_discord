@@ -180,67 +180,115 @@ async def giftcode_status(interaction: discord.Interaction, giftcode: str = None
         
     else:
         results = await get_giftcode_status(player_id, giftcode)
-        
+
         if not results:
             search_desc = ""
             if player_id and giftcode:
-                search_desc = f"Spieler `{player_id}` und Giftcode `{giftcode}`"
+                search_desc = f"Player `{player_id}` and giftcode `{giftcode}`"
             elif player_id:
-                search_desc = f"Spieler `{player_id}`"
+                search_desc = f"Player `{player_id}`"
             elif giftcode:
                 search_desc = f"Giftcode `{giftcode}`"
             else:
-                search_desc = "die letzten Versuche"
-            
+                search_desc = "the last attempts"
+
             await interaction.followup.send(f"No tries found for {search_desc}.")
             return
-        
-        thread = await interaction.channel.create_thread(
-            name=f"Giftcode Status Details", 
-            auto_archive_duration=60, 
-            type=discord.ChannelType.public_thread
-        )
-        
-        thread_url = f"https://discord.com/channels/{interaction.guild.id}/{thread.id}"
-        await interaction.followup.send(f"Detailed results will be in this [Thread]({thread_url}).")
-        
+
+        in_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+        in_thread = isinstance(interaction.channel, discord.Thread)
+
+        target = None
+
+        if in_dm:
+            # We're already in DMs: send details here
+            target = interaction.channel
+            await interaction.followup.send("Sending the detailed results here")
+        elif in_thread:
+            # Command used inside a thread: send details via DM to the user
+            try:
+                target = await interaction.user.create_dm()
+                await interaction.followup.send("Sending you the results via DM.")
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    "I couldn't DM you the details (DMs are disabled). Please enable DMs or run the command in a normal channel."
+                )
+                return
+        else:
+            # Normal guild channel: create a thread and post details there
+            try:
+                thread = await interaction.channel.create_thread(
+                    name="Giftcode Status Details",
+                    auto_archive_duration=60,
+                    type=discord.ChannelType.public_thread
+                )
+                target = thread
+                thread_url = f"https://discord.com/channels/{interaction.guild.id}/{thread.id}"
+                await interaction.followup.send(f"Detailed results will be in this [Thread]({thread_url}).")
+            except discord.Forbidden:
+                # fallback to DM if we lack permissions
+                try:
+                    target = await interaction.user.create_dm()
+                    await interaction.followup.send(
+                        "I'm unable to create a thread here (missing permissions). Sending you the details via DM."
+                    )
+                except discord.Forbidden:
+                    await interaction.followup.send(
+                        "I'm unable to create a thread here (missing permissions) and I can't DM you (Are your DMs disabled?)."
+                    )
+                    return
+            except discord.HTTPException:
+                # fallback to DM on thread creation failure
+                try:
+                    target = await interaction.user.create_dm()
+                    await interaction.followup.send(
+                        "Thread creation is not possible here. Sending you the details via DM."
+                    )
+                except discord.Forbidden:
+                    await interaction.followup.send(
+                        "Thread creation is not possible here and your DMs are disabled."
+                    )
+                    return
+
         embed = discord.Embed(title="Giftcode Attempt Details", color=discord.Color.blue())
         field_count = 0
-        
-        for result in results[:25]:  # Limitiere auf 25 für ersten Embed
+
+        status_emoji = {
+            'SUCCESS': '✅',
+            'ALREADY_RECEIVED': '🔄',
+            'EXPIRED': '⏰',
+            'INVALID': '❌',
+            'REQUIREMENT': '🤷‍♂️',
+            'CLAIM_LIMIT': '🚫',
+            'CAPTCHA_ERROR': '🔤',
+            'ERROR': '⚠️',
+            'PENDING': '⏳'
+        }
+
+        for result in results[:25]:
             player_id_val, giftcode_val, status, attempt_time, player_name = result
-            emoji = {
-                'SUCCESS': '✅',
-                'ALREADY_RECEIVED': '🔄',
-                'EXPIRED': '⏰',
-                'INVALID': '❌',
-                'REQUIREMENT': '🤷‍♂️',
-                'CLAIM_LIMIT': '🚫',
-                'CAPTCHA_ERROR': '🔤',
-                'ERROR': '⚠️',
-                'PENDING': '⏳'
-            }.get(status, '❓')
-            
+            emoji = status_emoji.get(status, '❓')
+
             try:
                 dt = datetime.fromisoformat(attempt_time)
                 time_str = dt.strftime("%d.%m.%Y %H:%M")
-            except:
+            except Exception:
                 time_str = attempt_time
-            
+
             embed.add_field(
                 name=f"{emoji} {player_name or 'Unknown'} (ID: {player_id_val})",
                 value=f"Code: `{giftcode_val}`\nStatus: {status}\nTime: {time_str}",
                 inline=True
             )
             field_count += 1
-            
+
             if field_count == 25:
-                await thread.send(embed=embed)
+                await target.send(embed=embed)
                 embed = discord.Embed(title="Giftcode Attempt Details (cont.)", color=discord.Color.blue())
                 field_count = 0
-        
+
         if field_count > 0:
-            await thread.send(embed=embed)
+            await target.send(embed=embed)
 
 @bot.tree.command(name="giftcode_history", description="Show history of recent giftcodes. R4+ only.")
 @app_commands.checks.has_any_role(*allowed_roles)
