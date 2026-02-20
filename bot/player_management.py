@@ -160,7 +160,7 @@ async def add_id(interaction: discord.Interaction, player_id: str):
                     player_name,
                     playerdata.get("kid", 543),
                     playerdata.get("stove_lv", 1),
-                    False  # True = Redeem, False = Only Watchlist
+                    False # True = Redeem, False = Only Watchlist
                 ))
                 conn.commit()
 
