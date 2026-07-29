@@ -2,7 +2,7 @@ import re
 import discord
 from bot import bot
 from .redeem import use_codes
-from .tasks import check_guesswho, event_reminder, scheduled_update
+from .tasks import check_guesswho, event_reminder
 from .custom_logging import log_event
 
 def check_startup_permissions():
@@ -65,7 +65,6 @@ async def on_ready():
     check_startup_permissions()
     check_guesswho.start()
     event_reminder.start()
-    scheduled_update.start()
 
     print(f'Logged in as {bot.user.name}')
 

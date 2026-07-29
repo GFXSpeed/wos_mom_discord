@@ -8,6 +8,18 @@ from .custom_logging import log_commands
 
 DB_PATH = 'players.db'
 
+STATUS_EMOJI = {
+    'SUCCESS': '✅',
+    'ALREADY_RECEIVED': '🔄',
+    'EXPIRED': '⏰',
+    'INVALID': '❌',
+    'REQUIREMENT': '🤷‍♂️',
+    'CLAIM_LIMIT': '🚫',
+    'USER_INVALID': '👻',
+    'ERROR': '⚠️',
+    'PENDING': '⏳'
+}
+
 async def get_giftcode_autocomplete(interaction: discord.Interaction, current: str):
     #Autocomplete for giftcodes
     conn = sqlite3.connect(DB_PATH)
@@ -38,7 +50,7 @@ async def get_giftcode_autocomplete(interaction: discord.Interaction, current: s
 async def record_giftcode_attempt(player_id: str, player_name: str, giftcode: str, status: str):
     """
     Log giftcode attempts in the database.
-    Possible status: SUCCESS, ALREADY_RECEIVED, EXPIRED, INVALID, CLAIM_LIMIT, REQUIREMENT, CAPTCHA_ERROR, ERROR, PENDING
+    Possible status: see STATUS_EMOJI
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -158,18 +170,7 @@ async def giftcode_status(interaction: discord.Interaction, giftcode: str = None
         
         status_text = ""
         for status, count in summary['status_counts'].items():
-            emoji = {
-                'SUCCESS': '✅',
-                'ALREADY_RECEIVED': '🔄',
-                'EXPIRED': '⏰',
-                'INVALID': '❌',
-                'REQUIREMENT': '🤷‍♂️',
-                'CLAIM_LIMIT': '🚫',
-                'CAPTCHA_ERROR': '🔤',
-                'ERROR': '⚠️',
-                'PENDING': '⏳'
-            }.get(status, '❓')
-            status_text += f"{emoji} {status}: {count}\n"
+            status_text += f"{STATUS_EMOJI.get(status, '❓')} {status}: {count}\n"
         
         embed.add_field(name="Status Overview", value=status_text, inline=False)
         embed.add_field(name="Total attempts", value=str(summary['total_attempts']), inline=True)
@@ -253,21 +254,9 @@ async def giftcode_status(interaction: discord.Interaction, giftcode: str = None
         embed = discord.Embed(title="Giftcode Attempt Details", color=discord.Color.blue())
         field_count = 0
 
-        status_emoji = {
-            'SUCCESS': '✅',
-            'ALREADY_RECEIVED': '🔄',
-            'EXPIRED': '⏰',
-            'INVALID': '❌',
-            'REQUIREMENT': '🤷‍♂️',
-            'CLAIM_LIMIT': '🚫',
-            'CAPTCHA_ERROR': '🔤',
-            'ERROR': '⚠️',
-            'PENDING': '⏳'
-        }
-
         for result in results[:25]:
             player_id_val, giftcode_val, status, attempt_time, player_name = result
-            emoji = status_emoji.get(status, '❓')
+            emoji = STATUS_EMOJI.get(status, '❓')
 
             try:
                 dt = datetime.fromisoformat(attempt_time)

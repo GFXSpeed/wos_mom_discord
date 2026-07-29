@@ -1,13 +1,14 @@
 import os
+import asyncio
 import sqlite3
 import discord
 import httpx
 from discord import app_commands
 from discord.ext import commands
 from bot import bot, allowed_roles
-from .wos_api import get_playerdata
+from .wos_api import verify_player, DEFAULT_STATE
 from .custom_logging import log_commands, log_event
-from .ui import PlayerActionView, PlayerDetailsView
+from .ui import PlayerActionView
 
 DB_PATH = 'players.db'
 
@@ -19,7 +20,7 @@ async def format_furnance_level(level):
         return "Invalid Level"
     
     if level == 0:
-        return "Error on getting level"
+        return "Unknown"  # not set - the API no longer reports levels
     if level <= 30:
         return f"Furnance-Level {level}"
     if 31 <= level <= 34:
@@ -55,131 +56,63 @@ async def get_player_autocomplete(interaction: discord.Interaction, current: str
     finally:
         conn.close()
 
-# Helper to update names during update process
-async def update_player_in_db(player_id, name, state, furnance_level):
-    conn = sqlite3.connect('players.db')
+async def add_player(interaction: discord.Interaction, player_id: str, name: str, state: int, redeem: bool):
+    """Shared body of /add_id and /watch. The API only accepts a player id together with its state."""
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("UPDATE players SET name = ?, state = ?, furnance_level = ? WHERE player_id = ?", (name, state, furnance_level, player_id))
-    conn.commit()
-    conn.close()
 
-# Helper to get current name
-async def get_name_from_db(player_id):
-    conn = sqlite3.connect('players.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM players WHERE player_id = ?", (player_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else None
+    try:
+        cursor.execute("SELECT name FROM players WHERE player_id = ?", (player_id,))
+        result = cursor.fetchone()
+        if result:
+            await interaction.followup.send(f'Player ID {player_id} already exists with name **{result[0]}**.')
+            return
 
+        async with httpx.AsyncClient() as client:
+            valid = await verify_player(client, player_id, state)
+
+        if valid is False:
+            await interaction.followup.send(f'Player ID {player_id} is not valid in state {state}.')
+            return
+        if valid is None:
+            await interaction.followup.send('The gift code API is not responding. Please try again later.')
+            return
+
+        cursor.execute('''
+            INSERT INTO players (player_id, name, state, furnance_level, redeem)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (int(player_id), name, state, 0, redeem))
+        conn.commit()
+
+        embed = discord.Embed(title="", color=discord.Color.blue())
+        embed.set_author(name=name)
+        embed.add_field(name="Player-ID", value=player_id, inline=False)
+        embed.add_field(name="State", value=str(state))
+        embed.add_field(name="Status", value="Active" if redeem else "Watchlist")
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        await interaction.followup.send('Something went wrong. Please try again later.')
+        await log_event('Add Player Error', player_id=player_id, error=str(e))
+    finally:
+        conn.close()
 
 
 #################### COMMANDS ####################
-@bot.tree.command(name="add_id", description="Adds a player ID. Tracks progress and claims giftcodes. Usage: /add_id <player_id>")
-async def add_id(interaction: discord.Interaction, player_id: str):
+@bot.tree.command(name="add_id", description="Adds a player. Tracks progress and claims giftcodes. Usage: /add_id <player_id> <name> [state]")
+@app_commands.describe(name="In-game name", state="State the player is in")
+async def add_id(interaction: discord.Interaction, player_id: str, name: str, state: int = DEFAULT_STATE):
     await interaction.response.defer()
-    await log_commands(interaction, player_id=player_id)
+    await log_commands(interaction, player_id=player_id, state=state)
+    await add_player(interaction, player_id, name, state, redeem=True)
 
-    conn = sqlite3.connect('players.db')
-    cursor = conn.cursor()
 
-    try:
-        cursor.execute("SELECT name FROM players WHERE player_id = ?", (player_id,))
-        result = cursor.fetchone()
-
-        if result:
-            player_name = result[0]
-            await interaction.followup.send(f'Player ID {player_id} already exists with name **{player_name}**.')
-        else:
-            async with httpx.AsyncClient() as client:
-                playerdata = await get_playerdata(player_id, client)
-
-            if playerdata:
-                player_name = playerdata.get("nickname")
-                avatar_image = playerdata.get("avatar_image")
-                stove_lv_content = playerdata.get("stove_lv_content")
-
-                cursor.execute('''
-                    INSERT INTO players (player_id, name, state, furnance_level, redeem)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    int(player_id),
-                    player_name,
-                    playerdata.get("kid", 543),
-                    playerdata.get("stove_lv", 1),
-                    True  # True = Redeem, False = Only Watchlist
-                ))
-                conn.commit()
-
-                
-                embed = discord.Embed(title="", color=discord.Color.blue())
-                if isinstance(stove_lv_content, str) and stove_lv_content.startswith(("http://", "https://")):
-                    embed.set_author(name=player_name, icon_url=stove_lv_content)
-                else:
-                    embed.set_author(name=player_name) 
-                embed.add_field(name="Player-ID", value=player_id, inline=False)
-                embed.set_thumbnail(url=avatar_image)
-                await interaction.followup.send(embed=embed)
-            else:
-                await interaction.followup.send(f'Player ID {player_id} is not valid.')
-    except Exception as e:
-        await interaction.followup.send(f'Something went wrong. Please try again later.')
-        await log_commands(e)
-    finally:
-        conn.close()
-
-@bot.tree.command(name="watch", description="Track players progress. Giftcodes will not be redeemed. Usage: /watch <player_id>")
-async def add_id(interaction: discord.Interaction, player_id: str):
+@bot.tree.command(name="watch", description="Track a players progress. Giftcodes will not be redeemed. Usage: /watch <player_id> <name> [state]")
+@app_commands.describe(name="In-game name", state="State the player is in")
+async def watch(interaction: discord.Interaction, player_id: str, name: str, state: int = DEFAULT_STATE):
     await interaction.response.defer()
-    await log_commands(interaction, player_id=player_id)
+    await log_commands(interaction, player_id=player_id, state=state)
+    await add_player(interaction, player_id, name, state, redeem=False)
 
-    conn = sqlite3.connect('players.db')
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute("SELECT name FROM players WHERE player_id = ?", (player_id,))
-        result = cursor.fetchone()
-
-        if result:
-            player_name = result[0]
-            await interaction.followup.send(f'Player ID {player_id} already exists with name **{player_name}**.')
-        else:
-            async with httpx.AsyncClient() as client:
-                playerdata = await get_playerdata(player_id, client)
-
-            if playerdata:
-                player_name = playerdata.get("nickname")
-                avatar_image = playerdata.get("avatar_image")
-                stove_lv_content = playerdata.get("stove_lv_content")
-
-                cursor.execute('''
-                    INSERT INTO players (player_id, name, state, furnance_level, redeem)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    int(player_id),
-                    player_name,
-                    playerdata.get("kid", 543),
-                    playerdata.get("stove_lv", 1),
-                    False # True = Redeem, False = Only Watchlist
-                ))
-                conn.commit()
-
-                
-                embed = discord.Embed(title="", color=discord.Color.blue())
-                if isinstance(stove_lv_content, str) and stove_lv_content.startswith(("http://", "https://")):
-                    embed.set_author(name=player_name, icon_url=stove_lv_content)
-                else:
-                    embed.set_author(name=player_name)  
-                embed.add_field(name="Player-ID", value=player_id, inline=False)
-                embed.set_thumbnail(url=avatar_image)
-                await interaction.followup.send(embed=embed)
-            else:
-                await interaction.followup.send(f'Player ID {player_id} is not valid.')
-    except Exception as e:
-        await interaction.followup.send(f'Something went wrong. Please try again later.')
-        await log_commands(e)
-    finally:
-        conn.close()
 
 @bot.tree.command(name="remove_id", description="Removes player IDs. R4+ only. Usage: /remove_id <player_id> <player_id>")
 @app_commands.checks.has_any_role(*allowed_roles)
@@ -310,157 +243,112 @@ async def list_ids(interaction: discord.Interaction):
 
 
         
-@bot.tree.command(name="details", description="Shows details of a player. Usage: /details <player_id>")
+@bot.tree.command(name="details", description="Shows details of a player. Usage: /details <player_id> [state]")
 @app_commands.autocomplete(player_id=get_player_autocomplete)
-async def details(interaction: discord.Interaction, player_id: str):
+@app_commands.describe(state="Only needed for players that are not in the database")
+async def details(interaction: discord.Interaction, player_id: str, state: int = None):
     await log_commands(interaction)
     await interaction.response.defer()
-    
-    async with httpx.AsyncClient() as client:
-        player_data = await get_playerdata(player_id, client)
-    
-    if player_data is None:
-        await interaction.followup.send(f"Player ID {player_id} is not valid or could not be found.")
-        return
-    
-    nickname = player_data.get("nickname", "Unknown")
-    avatar_image = player_data.get("avatar_image")
-    stove_lv_content = player_data.get("stove_lv_content")
-    stove_lv = int(player_data.get("stove_lv", 0))
-    formatted_stove_lv = await format_furnance_level(stove_lv)
-    state = player_data.get("kid")
 
-    # Check if player is already in db
-    conn = sqlite3.connect('players.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT redeem FROM players WHERE player_id = ?", (player_id,))
+    cursor.execute("SELECT name, state, furnance_level, redeem FROM players WHERE player_id = ?", (player_id,))
     result = cursor.fetchone()
-    player_exists = result is not None
-    redeem_status = result[0] if result else None
     conn.close()
 
-    embed = discord.Embed(title="", color=discord.Color.blue())
-    if isinstance(stove_lv_content, str) and stove_lv_content.startswith(("http://", "https://")):
-        embed.set_author(name=nickname, icon_url=stove_lv_content)
-    else:
-        embed.set_author(name=nickname)
-    embed.add_field(name="Player-ID", value=player_id, inline=False)
-    embed.add_field(name="Furnance-Level", value=formatted_stove_lv)
-    embed.add_field(name="State", value=state)
-    embed.set_thumbnail(url=avatar_image)
-
-    if player_exists:
-        status_text = "This player is already in the database."
+    if result:
+        name, db_state, furnance_level, redeem_status = result
+        state = state or db_state or DEFAULT_STATE
+        status_text = "This player is in the database."
         status_text += " (Watchlist)" if redeem_status == 0 else " (Active)"
     else:
-        status_text = "This player is not in the database."
+        name, furnance_level = "Unknown", 0
+        state = state or DEFAULT_STATE
+        status_text = f"This player is not in the database. Add with `/add_id {player_id} <name> {state}`."
 
+    async with httpx.AsyncClient() as client:
+        valid = await verify_player(client, player_id, state)
+    validity = {True: "✅ accepted by the API", False: "❌ rejected by the API (wrong state or unknown ID)"}.get(valid, "❓ API did not respond")
+
+    embed = discord.Embed(title="", color=discord.Color.blue())
+    embed.set_author(name=name)
+    embed.add_field(name="Player-ID", value=player_id, inline=False)
+    embed.add_field(name="Furnance-Level", value=await format_furnance_level(furnance_level))
+    embed.add_field(name="State", value=str(state))
+    embed.add_field(name="ID + State", value=validity, inline=False)
     embed.add_field(name="Status", value=status_text, inline=False)
 
-    view = PlayerDetailsView(player_id, nickname, state, stove_lv, player_exists)
+    view = PlayerActionView(player_id, name) if result else None
     await interaction.followup.send(embed=embed, view=view)
 
-async def update_player_data(player_id=None, player_name=None, player_data=None):
-    updated_players = []
-    pending_players = []
 
-    if player_data is None:
-        conn = sqlite3.connect('players.db')
-        cursor = conn.cursor()
+async def validate_players():
+    """Check every stored id+state pair against the API. Returns the rejected ones."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT player_id, name, state FROM players")
+    players = cursor.fetchall()
+    conn.close()
 
-        cursor.execute("SELECT player_id, name, state, furnance_level FROM players")
-        player_data = {str(row[0]): {"name": row[1], "state": row[2], "furnance_level": row[3]} for row in cursor.fetchall()}
-        conn.close()
+    invalid = []
+    async with httpx.AsyncClient() as client:
+        for player_id, name, state in players:
+            valid = await verify_player(client, player_id, state or DEFAULT_STATE)
+            if valid is False:
+                invalid.append((player_id, name))
+                await log_event("Player rejected by API", player_id=player_id, player_name=name, state=state)
+            await asyncio.sleep(1)
 
-        async with httpx.AsyncClient() as client:
-            for player_id, old_data in player_data.items():
-                old_name = old_data["name"]
-                old_state = old_data["state"]
-                old_furnance_level = old_data["furnance_level"]
+    print(f'Invalid players: {invalid}')
+    return invalid
 
-                try:
-                    api_data = await get_playerdata(player_id, client)
-                    if api_data:
-                        new_name = api_data.get("nickname")
-                        new_state = api_data.get("kid")
-                        new_furnance_level = api_data.get("stove_lv")
 
-                        # Player in another state
-                        if new_state != 543:
-                            pending_players.append((player_id, old_name))
-                            await log_event("Player outside state 543", player_id=player_id, player_name=new_name, state=new_state)
-                            print(f"Player {player_id} is outside region 543 (region {new_state})")
-                            continue
-
-                        # Apply changes
-                        if new_name != old_name or new_state != old_state or new_furnance_level != old_furnance_level:
-                            updated_players.append({
-                                "player_id": player_id,
-                                "old_name": old_name,
-                                "new_name": new_name if new_name != old_name else None,
-                                "old_state": old_state,
-                                "new_state": new_state if new_state != old_state else None,
-                                "old_furnance_level": old_furnance_level,
-                                "new_furnance_level": new_furnance_level if new_furnance_level != old_furnance_level else None
-                            })
-                            await update_player_in_db(player_id, new_name, new_state, new_furnance_level)
-                            await log_event(
-                                'Player Data Updated',
-                                player_id=player_id,
-                                old_name=old_name,
-                                new_name=new_name if new_name != old_name else old_name,
-                                old_state=old_state,
-                                new_state=new_state if new_state != old_state else old_state,
-                                old_furnance_level=old_furnance_level,
-                                new_furnance_level=new_furnance_level if new_furnance_level != old_furnance_level else old_furnance_level
-                            )
-                except Exception as e:
-                    print(f"Error processing player ID {player_id}: {e}")
-                    await log_event('Update Player Error', player_id=player_id, error=str(e))
-                    continue
-
-    print(f'Updated players: {updated_players}\nPending players: {pending_players}')
-    return updated_players, pending_players
-
-@bot.tree.command(name="update_player", description="Updates all player data to ensure validity.")
+@bot.tree.command(name="update_player", description="Updates a players data. R4+ only. Usage: /update_player <player_id> [name] [state] [level]")
+@app_commands.autocomplete(player_id=get_player_autocomplete)
 @app_commands.checks.has_any_role(*allowed_roles)
-async def update_players(interaction: discord.Interaction):
+async def update_player(interaction: discord.Interaction, player_id: str, name: str = None, state: int = None, furnance_level: int = None):
+    await log_commands(interaction, player_id=player_id)
+    await interaction.response.defer()
+
+    changes = {"name": name, "state": state, "furnance_level": furnance_level}
+    changes = {column: value for column, value in changes.items() if value is not None}
+    if not changes:
+        await interaction.followup.send("Nothing to change. Provide a name, state or furnance level.")
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    assignments = ", ".join(f"{column} = ?" for column in changes)
+    cursor.execute(f"UPDATE players SET {assignments} WHERE player_id = ?", (*changes.values(), player_id))
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+
+    if not updated:
+        await interaction.followup.send(f"Player ID {player_id} is not in the database.")
+        return
+
+    await log_event('Player Data Updated', player_id=player_id, **changes)
+    await interaction.followup.send(
+        f"Updated player {player_id}: " + ", ".join(f"{column} -> {value}" for column, value in changes.items())
+    )
+
+
+@bot.tree.command(name="check_players", description="Checks all stored players against the API. R4+ only.")
+@app_commands.checks.has_any_role(*allowed_roles)
+async def check_players(interaction: discord.Interaction):
     await log_commands(interaction)
-    try:
-        await interaction.response.send_message("Updating players. This could take a while...", ephemeral=True)
-        
-        updated_players, pending_players = await update_player_data()
-        changes_summary = "Player data update completed.\n"
+    await interaction.response.send_message("Checking players. This could take a while...", ephemeral=True)
 
-        if updated_players:
-            changes_summary += "Updated players:\n"
-            for player in updated_players:
-                player_id = player["player_id"]
-                old_name = player["old_name"]
-                new_name = player["new_name"] if player["new_name"] else old_name
-                changes_summary += f"ID: {player_id}, Old Name: {old_name}, New Name: {new_name}\n"
-                
-                # Optional: Adding region and Furnance-Lvl
-                if player["new_state"] is not None:
-                    changes_summary += f"  - State: {player['old_state']} -> {player['new_state']}\n"
-                if player["new_furnance_level"] is not None:
-                    changes_summary += f"  - Furnance Level: {player['old_furnance_level']} -> {player['new_furnance_level']}\n"
+    invalid = await validate_players()
+    if not invalid:
+        await interaction.followup.send("All players are valid.")
+        return
 
-        # Using Buttons to chose what to do with pending players
-        for player_id, player_name in pending_players:
-            view = PlayerActionView(player_id, player_name, 'players.db')
-            message = await interaction.followup.send(
-                f"ID: {player_id}, Name: {player_name}\nPlayer may not exist or is in another state. What do you want to do?",
-                view=view,
-                ephemeral=False
-            )
-            await view.wait()
-
-        if not updated_players and not pending_players:
-            changes_summary = "No changes detected."
-
-        await interaction.followup.send(changes_summary)
-        
-    except Exception as e:
-        await interaction.followup.send(f'Something went wrong while updating player data', ephemeral=True)
-        await log_commands(f"Error: {e}")
+    for player_id, name in invalid:
+        view = PlayerActionView(player_id, name)
+        await interaction.followup.send(
+            f"ID: {player_id}, Name: {name}\nPlayer does not exist or is in another state. What do you want to do?",
+            view=view
+        )
+        await view.wait()

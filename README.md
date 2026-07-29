@@ -6,7 +6,6 @@ Welcome to wos_mom_discord, a Discord bot designed to enhance your server experi
 
 ## Requirements
 - Python 3.11
-- For Giftcode Redemption: Trained Keras Modell 
 
 ## Features
 - Giftcode Redemption: Redeem giftcodes for multiple players using Centurygames-API. To keep things clean, a new thread will be created
@@ -21,13 +20,14 @@ Welcome to wos_mom_discord, a Discord bot designed to enhance your server experi
 4. (Optional: Subscribe to offical WOS-Discord-Giftcode-Channel for automatic redeem)
 
 ## Available Commands
-- /add_id - Adds a player ID. Player will recieve gifts and will be included in daily updates. Usage: `/add_id <player_id>`
-- /watch - Same as add_id but players wont recieve gifts. `/watch <player_id>`
+- /add_id - Adds a player. Player will recieve gifts. Usage: `/add_id <player_id> <name> [state]`
+- /watch - Same as add_id but players wont recieve gifts. `/watch <player_id> <name> [state]`
 - /remove_id - Removes player IDs. (Allowed Roles only) Usage: `/remove_id <player_id, player_id>`
 - /list_ids - Lists all player IDs and names. Usage: `/list_ids`
 - /watchlist - Lists all player IDs and names on the watchlist. Usage: `/watchlist`
-- /details - Shows details of a player. Usage: `/details <player_id>`
-- /update_player - Updates all player data to ensure validity. (Allowed Roles only) Usage `/update_player`
+- /details - Shows details of a player. Usage: `/details <player_id> [state]`
+- /update_player - Updates name, state or furnance level of a player. (Allowed Roles only) Usage `/update_player <player_id> [name] [state] [furnance_level]`
+- /check_players - Checks all stored players against the API. (Allowed Roles only) Usage `/check_players`
 - /info - Shows what this bot is about 
 - /code - Starts process with manual giftcode. (Allowed Roles only). Usage: `/code <code>`
 - /guess - **ONLY WORKS IF BOT IS DM'ed. Send a picture anonymously so others can guess who you are. Usage: `/guess <image>`
@@ -35,7 +35,6 @@ Welcome to wos_mom_discord, a Discord bot designed to enhance your server experi
 ## Available Actions
 - Automatic redemption of giftcodes officals pattern is recognized
 - Event-Announcements. Send a reminder with `@everyone` 10 miuntes before your Discord-Events starts
-- Daily updates. Playerdata will be updated every 24 hours. Updates will be sent to your news-channel
 
 ## Logging:
 Logs of Bot, used commands, events and redeem-events can be found in ./logs Folder

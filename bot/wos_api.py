@@ -1,11 +1,10 @@
 import hashlib
 import json
-import httpx
-import asyncio
 from datetime import datetime
 
-WOS_PLAYER_INFO_URL = 'https://wos-giftcode-api.centurygame.com/api/player'
+WOS_GIFTCODE_URL = 'https://wos-giftcode-api.centurygame.com/api/gift_code'
 WOS_ENCRYPT_KEY = "tB87#kPtkxqOS2"
+DEFAULT_STATE = 543
 WOS_HEADERS = {
     "accept": "application/json, text/plain, */*",
     "accept-language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -21,6 +20,19 @@ WOS_HEADERS = {
     "sec-fetch-site": "same-site",
 }
 
+# API msg -> internal status. Anything unlisted becomes ERROR.
+STATUS_BY_MSG = {
+    "SUCCESS": "SUCCESS",
+    "RECEIVED.": "ALREADY_RECEIVED",
+    "TIME ERROR.": "EXPIRED",
+    "CDK NOT FOUND.": "INVALID",
+    "USED.": "CLAIM_LIMIT",
+    "RECHARGE_MONEY ERROR.": "REQUIREMENT",
+    "RECHARGE_MONEY_VIP ERROR.": "REQUIREMENT",
+    "USER INFO ERROR.": "USER_INVALID",  # unknown player id or wrong state
+}
+
+
 async def encode_data(data):
     encoded_data = "&".join(
         f"{key}={json.dumps(value) if isinstance(value, dict) else value}"
@@ -30,63 +42,39 @@ async def encode_data(data):
     return {"sign": sign, **data}
 
 
-async def get_playerdata(player_id, client, max_retries=5, initial_wait=5):
-    from .custom_logging import log_event
-
-    data_to_encode = {
+async def redeem_request(client, player_id, state, giftcode):
+    """One call to the gift code API. It validates fid+kid before it looks at the code."""
+    payload = {
         "fid": str(player_id),
+        "cdk": giftcode,
+        "kid": str(state),
         "time": str(int(datetime.now().timestamp())),
     }
-    encoded_data = await encode_data(data_to_encode)
+    data = await encode_data(payload)
+    response = await client.post(WOS_GIFTCODE_URL, headers=WOS_HEADERS, data=data)
 
-    last_error = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = await client.post(WOS_PLAYER_INFO_URL, headers=WOS_HEADERS, data=encoded_data)
-            response.raise_for_status()
+    if response.status_code != 200:
+        print(f"[GIFTCODE] fid={player_id} kid={state} cdk={giftcode} http={response.status_code}")
+        return "ERROR"
 
-            player_data = response.json()
-            if player_data.get("msg") == "success" and "data" in player_data:
-                player_info = player_data["data"]
-                print(f'pid {player_id} response: {player_data}')
-                return {
-                    "avatar_image": player_info.get("avatar_image"),
-                    "fid": player_info.get("fid"),
-                    "kid": player_info.get("kid"),
-                    "nickname": player_info.get("nickname"),
-                    "stove_lv": player_info.get("stove_lv"),
-                    "stove_lv_content": player_info.get("stove_lv_content"),
-                    "total_recharge_amount": player_info.get("total_recharge_amount"),
-                }
-            else:
-                error_msg = f"Invalid response data format for player ID {player_id}"
-                await log_event("PLAYER_DATA_ERROR", error=error_msg, player_id=player_id)
-                last_error = ValueError(error_msg)
-                continue
+    obj = response.json()
+    if isinstance(obj, list):
+        obj = obj[0] if obj else {}
+    status = STATUS_BY_MSG.get(obj.get("msg"), "ERROR")
+    print(f"[GIFTCODE] fid={player_id} kid={state} cdk={giftcode} -> {status} {obj}")
+    return status
 
-        except httpx.HTTPStatusError as e:
-            response = e.response
-            if response.status_code == 429:
-                retry_after = int(response.headers.get("Retry-After", initial_wait * (2 ** (attempt - 1))))
-                await log_event("RATE_LIMIT", player_id=player_id, retry_after=retry_after, attempt=attempt)
-                await asyncio.sleep(retry_after)
-                last_error = e
-                continue
-            else:
-                error_msg = f"HTTP error {response.status_code} for player ID {player_id}: {e}"
-                await log_event("HTTP_ERROR", error=error_msg, player_id=player_id)
-                last_error = e
-                continue
 
-        except Exception as e:
-            error_msg = f"Unexpected error for player ID {player_id}: {str(e)}"
-            await log_event("UNEXPECTED_ERROR", error=error_msg, player_id=player_id)
-            last_error = e
-            continue
+async def verify_player(client, player_id, state):
+    """
+    True if the id+state pair is accepted, False if not, None if the API didn't tell us.
 
-    # If we got here, we failed all retries
-    final_error = f"Max retries ({max_retries}) reached for player ID {player_id}."
-    if last_error:
-        final_error += f" Last error: {str(last_error)}"
-    await log_event("MAX_RETRIES", error=final_error, player_id=player_id)
+    ponytail: /api/player and /api/captcha are gone (404). The only remaining way to
+    check a player is a redeem call with a bogus code - the API rejects the user first.
+    """
+    status = await redeem_request(client, player_id, state, "Test")
+    if status == "USER_INVALID":
+        return False
+    if status == "INVALID":  # player accepted, only the dummy code was rejected
+        return True
     return None
